@@ -1,18 +1,7 @@
 
-def _wrapture(orig):
-    """
-    Returns a new method that wraps orig (the original method) with
-    something that first calls on_modify from the
-    instance. _ListWrapper uses this to wrap all methods that modify
-    the list.
-    """
+from twisted.internet import defer
 
-#    @functools.wraps(orig)
-    def foo(*args):
-        obj = args[0]
-        obj.on_modify()
-        return orig(*args)
-    return foo
+from txtorcon.interface import ITorControlProtocol
 
 class MagicContainer(object):
     """
@@ -69,12 +58,12 @@ class TorInfo(object):
     config.
     """
 
-    def __init__(self, control=None):
+    def __init__(self, control):
         self.protocol = ITorControlProtocol(control)
 
         self.post_bootstrap = defer.Deferred()
         if self.protocol.post_bootstrap:
-            self.protocol.post_bootstrap.addCallback(self.bootstrap).addErrback(log.err)
+            self.protocol.post_bootstrap.addCallback(self.bootstrap)
         else:
             self.bootstrap()
 
@@ -102,9 +91,11 @@ class TorInfo(object):
 
             mine = self
             for bit in bits[:-1]:
-                if mine.has_attr(bit):
+                if hasattr(mine, bit):
                     mine = getattr(mine, bit)
                     
                 else:
-                    setattr(mine, bit, MagicContainer())
+                    c = MagicContainer()
+                    setattr(mine, bit, c)
+                    mine = c
             setattr(mine, bits[-1], ConfigMethod('/'.join(bits), self.protocol, takes_arg))
