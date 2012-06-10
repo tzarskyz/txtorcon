@@ -9,7 +9,8 @@ class MagicContainer(object):
     instances; see do_setup in TorInfo. This could be object except
     we're not allowed to set arbitrary instances on object.
     """
-    pass
+    def __init__(self, n):
+        self.name = n
 
 class ConfigMethod(object):
     def __init__(self, info_key, protocol, takes_arg=False):
@@ -75,6 +76,7 @@ class TorInfo(object):
         self.post_bootstrap = None
 
     def _do_setup(self, data):
+        print "ODSETUP"
         for line in data.split('\n'):
             if line == "info/names=" or line == "OK":
                 continue
@@ -91,11 +93,12 @@ class TorInfo(object):
 
             mine = self
             for bit in bits[:-1]:
+                bit = bit.replace('-', '_')
                 if hasattr(mine, bit):
                     mine = getattr(mine, bit)
                     
                 else:
-                    c = MagicContainer()
+                    c = MagicContainer(bit)
                     setattr(mine, bit, c)
                     mine = c
-            setattr(mine, bits[-1], ConfigMethod('/'.join(bits), self.protocol, takes_arg))
+            setattr(mine, bits[-1].replace('-', '_'), ConfigMethod('/'.join(bits), self.protocol, takes_arg))
