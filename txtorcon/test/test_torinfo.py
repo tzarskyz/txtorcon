@@ -55,7 +55,7 @@ multi/path a documentation string
         self.assertTrue(hasattr(info, 'multi'))
         self.assertTrue(hasattr(getattr(info,'multi'), 'path'))
 
-        self.protocol.answers.append('foo')
+        self.protocol.answers.append({'something': 'foo'})
 
         d = info.something()
         d.addCallback(CheckAnswer(self, 'foo'))
@@ -70,7 +70,7 @@ multi/path/arg/* a documentation string
         self.assertTrue(hasattr(getattr(info,'multi'), 'path'))
         self.assertTrue(hasattr(getattr(getattr(info,'multi'), 'path'), 'arg'))
 
-        self.protocol.answers.append('bar')
+        self.protocol.answers.append({'multi/path/arg/quux': 'bar'})
 
         try:
             info.multi.path.arg()
