@@ -37,8 +37,8 @@ def setup_failed(arg):
     reactor.stop()
 
 def bootstrap(c):
-    conf = TorInfo(c)
-    conf.post_bootstrap.addCallback(setup_complete).addErrback(setup_failed)
+    info = TorInfo(c)
+    info.post_bootstrap.addCallback(setup_complete).addErrback(setup_failed)
 
 point = None
 try:
