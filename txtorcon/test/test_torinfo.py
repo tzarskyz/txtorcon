@@ -81,3 +81,10 @@ multi/path/arg/* a documentation string
         d = info.multi.path.arg('quux')
         d.addCallback(CheckAnswer(self, 'bar'))
         return d
+
+    def test_dump(self):
+        self.protocol.answers.append('''info/names=
+multi/path/arg/* a documentation string
+''')
+        info = TorInfo(self.protocol)
+        info.dump()

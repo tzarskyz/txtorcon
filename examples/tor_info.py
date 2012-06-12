@@ -30,6 +30,8 @@ def setup_complete(info):
     info.dump()
     info.version().addCallback(dump)
     info.ip_to_country('1.2.3.4').addCallback(dump)
+    info.status.bootstrap_phase().addCallback(dump)
+#    info.ns.name('moria').addCallback(dump)
     info.features.names().addCallback(last_one)
     
 def setup_failed(arg):

@@ -32,7 +32,7 @@ class ConfigMethod(object):
         arg = ''
         if self.takes_arg:
             arg = 'arg'
-        print '%s(%s)' % (n, arg)
+        #print '%s(%s)' % (n, arg)
             
     def __call__(self, *args):
         if self.takes_arg:
