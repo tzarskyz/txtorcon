@@ -82,6 +82,18 @@ multi/path/arg/* a documentation string
         d.addCallback(CheckAnswer(self, 'bar'))
         return d
 
+    def test_with_arg_error(self):
+        self.protocol.answers.append('''info/names=
+multi/no-arg docstring
+''')
+        info = TorInfo(self.protocol)
+    
+        try:
+            info.multi.no_arg('an argument')
+            self.assertTrue(False)
+        except TypeError, e:
+            pass
+
     def test_dump(self):
         self.protocol.answers.append('''info/names=
 multi/path/arg/* a documentation string
