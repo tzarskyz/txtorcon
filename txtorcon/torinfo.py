@@ -1,4 +1,4 @@
-
+import functools
 from twisted.internet import defer
 
 from txtorcon.interface import ITorControlProtocol
@@ -45,8 +45,11 @@ class ConfigMethod(object):
                 raise TypeError('"%s" takes no arguments' % self.info_key)
             
             req = self.info_key
+
+        def strip_dict(k, d):
+            return d[k]
         
-        return self.proto.get_info(req)
+        return self.proto.get_info(req).addCallback(functools.partial(strip_dict, req))
 
 class TorInfo(object):
     """
@@ -58,7 +61,7 @@ class TorInfo(object):
     corresponding Tor GETINFO would take one (in 'GETINFO info/names'
     it will end with '/*', and the same in torspec). In either case,
     the method returns a Deferred which will callback with the
-    requested value.
+    requested value, always a string.
 
     For example:
 
