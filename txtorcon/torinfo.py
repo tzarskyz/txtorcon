@@ -12,12 +12,28 @@ class MagicContainer(object):
     def __init__(self, n):
         self.name = n
 
+    def dump(self, prefix):
+        prefix = prefix + '.' + self.name
+        for x in dir(self):
+            try:
+                getattr(self, x).dump(prefix)
+            except:
+                pass
+
 class ConfigMethod(object):
     def __init__(self, info_key, protocol, takes_arg=False):
         self.info_key = info_key
         self.proto = protocol
         self.takes_arg = takes_arg
 
+    def dump(self, prefix):
+        n = self.info_key.replace('/', '.')
+        n = n.replace('-','_')
+        arg = ''
+        if self.takes_arg:
+            arg = 'arg'
+        print '%s(%s)' % (n, arg)
+            
     def __call__(self, *args):
         if self.takes_arg:
             if len(args) != 1:
@@ -75,6 +91,14 @@ class TorInfo(object):
         self.post_bootstrap.callback(self)
         self.post_bootstrap = None
 
+    def dump(self):
+        print "DUMP:"
+        for x in dir(self):
+            try:
+                getattr(self, x).dump('')
+            except:
+                pass
+
     def _do_setup(self, data):
         print "ODSETUP"
         for line in data.split('\n'):
@@ -82,6 +106,7 @@ class TorInfo(object):
                 continue
 
             (name, documentation) = line.split(' ', 1)
+            print name, documentation
             if name.endswith('/*'):
                 ## this takes an arg, so make a method
                 bits = name[:-2].split('/')
@@ -98,7 +123,15 @@ class TorInfo(object):
                     mine = getattr(mine, bit)
                     
                 else:
-                    c = MagicContainer(bit)
-                    setattr(mine, bit, c)
-                    mine = c
+                    if hasattr(mine, bit):
+                        mine = getattr(mine, bit)
+                        if not isinstance(MagicContainer, mine):
+                            raise RuntimeError("Already had something: %s for %s" % (bit, name))
+
+                    else:
+                        c = MagicContainer(bit)
+                        print "adding",bit
+                        setattr(mine, bit, c)
+                        mine = c
+            #print "LEAF:",bits[-1],takes_arg
             setattr(mine, bits[-1].replace('-', '_'), ConfigMethod('/'.join(bits), self.protocol, takes_arg))
