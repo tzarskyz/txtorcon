@@ -92,7 +92,6 @@ class TorInfo(object):
         self.post_bootstrap = None
 
     def dump(self):
-        print "DUMP:"
         for x in dir(self):
             try:
                 getattr(self, x).dump('')
@@ -100,13 +99,12 @@ class TorInfo(object):
                 pass
 
     def _do_setup(self, data):
-        print "ODSETUP"
         for line in data.split('\n'):
             if line == "info/names=" or line == "OK":
                 continue
 
             (name, documentation) = line.split(' ', 1)
-            print name, documentation
+            #print name, documentation
             if name.endswith('/*'):
                 ## this takes an arg, so make a method
                 bits = name[:-2].split('/')
@@ -130,7 +128,7 @@ class TorInfo(object):
 
                     else:
                         c = MagicContainer(bit)
-                        print "adding",bit
+                        #print "adding",bit
                         setattr(mine, bit, c)
                         mine = c
             #print "LEAF:",bits[-1],takes_arg

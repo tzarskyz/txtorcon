@@ -18,15 +18,18 @@ from zope.interface import implements
 from txtorcon import TorProtocolFactory, TorInfo
 from txtorcon.torinfo import MagicContainer, ConfigMethod
 
-def more(x):
+def dump(x):
+    print x
+
+def last_one(x):
     print 'foo',x
     reactor.stop()
 
 def setup_complete(info):
     print "Got info"
     info.dump()
-    d = info.features.names()
-    d.addCallback(more)
+    info.version().addCallback(dump)
+    info.features.names().addCallback(last_one)
     
 def setup_failed(arg):
     print "SETUP FAILED",arg
