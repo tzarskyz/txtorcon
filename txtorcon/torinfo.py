@@ -78,17 +78,28 @@ class TorInfo(object):
     config.
     """
 
-    def __init__(self, control):
+    def __init__(self, control, errback=None):
         self.protocol = ITorControlProtocol(control)
+        if errback is None:
+            errback = self._handle_error
 
         self.post_bootstrap = defer.Deferred()
         if self.protocol.post_bootstrap:
+            self.errback = errback
             self.protocol.post_bootstrap.addCallback(self.bootstrap)
+
         else:
             self.bootstrap()
 
+    def _handle_error(self, f):
+        '''FIXME: do we really need this?'''
+        print "ERROR",f
+        return f
+
     def bootstrap(self, *args):
-        return self.protocol.get_info_raw("info/names").addCallback(self._do_setup).addCallback(self.do_post_bootstrap)
+        d = self.protocol.get_info_raw("info/names").addCallback(self._do_setup).addErrback(self.errback).addCallback(self.do_post_bootstrap)
+        return d
+
 
     def do_post_bootstrap(self, *args):
         self.post_bootstrap.callback(self)
@@ -103,11 +114,11 @@ class TorInfo(object):
 
     def _do_setup(self, data):
         for line in data.split('\n'):
-            if line == "info/names=" or line == "OK":
+            if line == "info/names=" or line == "OK" or line.strip() == '':
                 continue
 
+#            print "LINE:",line
             (name, documentation) = line.split(' ', 1)
-            #print name, documentation
             if name.endswith('/*'):
                 ## this takes an arg, so make a method
                 bits = name[:-2].split('/')
@@ -122,17 +133,15 @@ class TorInfo(object):
                 bit = bit.replace('-', '_')
                 if hasattr(mine, bit):
                     mine = getattr(mine, bit)
+                    if not isinstance(mine, MagicContainer):
+                        raise RuntimeError("Already had something: %s for %s" % (bit, name))
                     
                 else:
-                    if hasattr(mine, bit):
-                        mine = getattr(mine, bit)
-                        if not isinstance(MagicContainer, mine):
-                            raise RuntimeError("Already had something: %s for %s" % (bit, name))
-
-                    else:
-                        c = MagicContainer(bit)
-                        #print "adding",bit
-                        setattr(mine, bit, c)
-                        mine = c
-            #print "LEAF:",bits[-1],takes_arg
-            setattr(mine, bits[-1].replace('-', '_'), ConfigMethod('/'.join(bits), self.protocol, takes_arg))
+                    c = MagicContainer(bit)
+                    setattr(mine, bit, c)
+                    mine = c
+            n = bits[-1].replace('-', '_')
+            if hasattr(mine, n):
+                raise RuntimeError("Already had something: %s for %s" % (n, name))
+            setattr(mine, n, ConfigMethod('/'.join(bits), self.protocol, takes_arg))
+        return None

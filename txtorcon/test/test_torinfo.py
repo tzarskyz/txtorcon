@@ -60,7 +60,46 @@ multi/path a documentation string
         d = info.something()
         d.addCallback(CheckAnswer(self, 'foo'))
         return d
-    
+
+    def test_same_prefix(self):
+        self.protocol.answers.append('''info/names=
+something/one a documentation string
+something/two a second documentation string
+''')
+        info = TorInfo(self.protocol)
+
+        self.assertTrue(hasattr(info,'something'))
+        self.assertTrue(hasattr(info.something, 'one'))
+        self.assertTrue(hasattr(info.something, 'two'))
+
+        self.protocol.answers.append({'something/two': 'bar'})
+
+        d = info.something.two()
+        d.addCallback(CheckAnswer(self, 'bar'))
+        return d
+
+    def handle_error(self, f):
+        if 'Already had something' in f.getErrorMessage():
+            self.error_happened = True
+
+    def test_prefix_error(self):
+        self.protocol.answers.append('''info/names=
+something not allowed I hope    
+something/one a documentation string
+''')
+        self.error_happened = False
+        info = TorInfo(self.protocol, self.handle_error)
+        self.assertTrue(self.error_happened)
+
+    def test_prefix_error_other_order(self):
+        self.protocol.answers.append('''info/names=
+something/one a documentation string
+something not allowed I hope    
+''')
+        self.error_happened = False
+        info = TorInfo(self.protocol, self.handle_error)
+        self.assertTrue(self.error_happened)
+
     def test_with_arg(self):
         self.protocol.answers.append('''info/names=
 multi/path/arg/* a documentation string
