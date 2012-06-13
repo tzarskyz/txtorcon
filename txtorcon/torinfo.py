@@ -81,11 +81,12 @@ class TorInfo(object):
     def __init__(self, control, errback=None):
         self.protocol = ITorControlProtocol(control)
         if errback is None:
-            errback = self._handle_error
+            self.errback = self._handle_error
+        else:
+            self.errback = errback
 
         self.post_bootstrap = defer.Deferred()
         if self.protocol.post_bootstrap:
-            self.errback = errback
             self.protocol.post_bootstrap.addCallback(self.bootstrap)
 
         else:

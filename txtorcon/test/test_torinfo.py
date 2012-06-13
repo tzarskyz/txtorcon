@@ -139,3 +139,10 @@ multi/path/arg/* a documentation string
 ''')
         info = TorInfo(self.protocol)
         info.dump()
+
+    def test_other_bootstrap(self):
+        self.protocol.answers.append('''info/names=
+multi/path/arg/* a documentation string
+''')
+        self.protocol.post_bootstrap = None
+        info = TorInfo(self.protocol)
