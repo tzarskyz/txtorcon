@@ -22,7 +22,7 @@ def dump(x):
     print x
 
 def last_one(x):
-    print 'foo',x
+    print x
     reactor.stop()
 
 def setup_complete(info):
@@ -31,7 +31,7 @@ def setup_complete(info):
     info.version().addCallback(dump)
     info.ip_to_country('1.2.3.4').addCallback(dump)
     info.status.bootstrap_phase().addCallback(dump)
-#    info.ns.name('moria').addCallback(dump)
+    info.ns.name('moria1').addCallback(dump)
     info.features.names().addCallback(last_one)
     
 def setup_failed(arg):
