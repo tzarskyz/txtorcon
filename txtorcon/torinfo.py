@@ -102,8 +102,15 @@ class TorInfo(object):
         info.traffic.written().addCallback(cb)
         info.ip_to_country('8.8.8.8').addCallback(cb)
 
+    For interactive use -- or even checking things progammatically -- TorInfo
+    pretends it only has attributes that coorespond to valid GETINFO calls.
+    So for example, dir(info) will only return all the currently valid top-level
+    things. In the above example this might be ['traffic', 'ip_to_country'] (of
+    course in practice this is a much longer list). And "dir(info.traffic)" might
+    return ['read', 'written']
+
     For something like this for config (GETCONF, SETCONF) see
-    TorConfig which quite a lot more complicated since you can change
+    TorConfig which is quite a lot more complicated (internally) since you can change
     config.
     """
 
