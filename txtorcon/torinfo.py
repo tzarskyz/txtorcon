@@ -171,8 +171,14 @@ class TorInfo(object):
 
             #print "LINE:",line
             (name, documentation) = line.split(' ', 1)
+            ## FIXME think about this -- this is the only case where
+            ## there's something that's a directory
+            ## (i.e. MagicContainer) AND needs to be a ConfigMethod as
+            ## well...but doesn't really see very useful. somewhat
+            ## simpler to not support this case for now...
             if name == 'config/*':
                 continue
+            
             if name.endswith('/*'):
                 ## this takes an arg, so make a method
                 bits = name[:-2].split('/')

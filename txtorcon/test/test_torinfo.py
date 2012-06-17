@@ -156,6 +156,17 @@ multi/path/arg/* a documentation string
         info = TorInfo(self.protocol)
         info.dump()
 
+    def test_config_star_workaround(self):
+        '''
+        ensure we ignore config/* for now
+        '''
+        
+        self.protocol.answers.append('''info/names=
+config/* a documentation string
+''')
+        info = TorInfo(self.protocol)
+        self.assertTrue(dir(info) == [])
+
     def test_other_bootstrap(self):
         self.protocol.answers.append('''info/names=
 multi/path/arg/* a documentation string
