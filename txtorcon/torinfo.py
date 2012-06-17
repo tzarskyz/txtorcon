@@ -6,11 +6,41 @@ from txtorcon.interface import ITorControlProtocol
 class MagicContainer(object):
     """
     This merely contains 1 or more methods or further MagicContainer
-    instances; see do_setup in TorInfo. This could be object except
-    we're not allowed to set arbitrary instances on object.
+    instances; see _do_setup in TorInfo.
+
+    Once _setup_complete() is called, this behaves differently so that
+    one can get nicer access to GETINFO things from TorInfo --
+    specifically dir() and so forth pretend that there are only
+    methods/attributes that pertain to actual Tor GETINFO keys.
+
+    See TorInfo.
     """
+    
     def __init__(self, n):
         self.name = n
+        self.attrs = {}
+        self._setup = False
+
+    def _setup_complete(self):
+        self._setup = True
+
+    def _add_attribute(self, n, v):
+        self.attrs[n] = v
+
+    def __getattribute__(self, name):
+        sup = super(MagicContainer, self)
+        if sup.__getattribute__('_setup') == False:
+            return sup.__getattribute__(name)
+
+        attrs = sup.__getattribute__('attrs')
+        if name == '__members__':
+            return attrs.keys()
+
+        else:
+            try:
+                return attrs[name]
+            except KeyError:
+                raise AttributeError(name)
 
     def dump(self, prefix):
         prefix = prefix + '.' + self.name
@@ -79,6 +109,10 @@ class TorInfo(object):
     """
 
     def __init__(self, control, errback=None):
+        self._setup = False
+        self.attrs = {}
+        '''After _setup is True, these are all we show as attributes.'''
+        
         self.protocol = ITorControlProtocol(control)
         if errback is None:
             self.errback = self._handle_error
@@ -92,13 +126,33 @@ class TorInfo(object):
         else:
             self.bootstrap()
 
+    def _add_attribute(self, n, v):
+        self.attrs[n] = v
+
+    def __getattribute__(self, name):
+        sup = super(TorInfo, self)
+        if sup.__getattribute__('_setup') == False:
+            return sup.__getattribute__(name)
+
+        attrs = sup.__getattribute__('attrs')
+        if name == '__members__':
+            return attrs.keys()
+
+        else:
+            try:
+                return attrs[name]
+            except KeyError:
+                if name in ['dump']:
+                    return object.__getattribute__(self, name)
+                raise AttributeError(name)
+            
     def _handle_error(self, f):
         '''FIXME: do we really need this?'''
         print "ERROR",f
         return f
 
     def bootstrap(self, *args):
-        d = self.protocol.get_info_raw("info/names").addCallback(self._do_setup).addErrback(self.errback).addCallback(self.do_post_bootstrap)
+        d = self.protocol.get_info_raw("info/names").addCallback(self._do_setup).addErrback(self.errback).addCallback(self.do_post_bootstrap).addCallback(self._setup_complete)
         return d
 
 
@@ -114,12 +168,15 @@ class TorInfo(object):
                 pass
 
     def _do_setup(self, data):
+        added_magic = []
         for line in data.split('\n'):
             if line == "info/names=" or line == "OK" or line.strip() == '':
                 continue
 
-#            print "LINE:",line
+            #print "LINE:",line
             (name, documentation) = line.split(' ', 1)
+            if name == 'config/*':
+                continue
             if name.endswith('/*'):
                 ## this takes an arg, so make a method
                 bits = name[:-2].split('/')
@@ -132,17 +189,24 @@ class TorInfo(object):
             mine = self
             for bit in bits[:-1]:
                 bit = bit.replace('-', '_')
-                if hasattr(mine, bit):
-                    mine = getattr(mine, bit)
+                if mine.attrs.has_key(bit):
+                    mine = mine.attrs[bit]
                     if not isinstance(mine, MagicContainer):
                         raise RuntimeError("Already had something: %s for %s" % (bit, name))
                     
                 else:
                     c = MagicContainer(bit)
-                    setattr(mine, bit, c)
+                    added_magic.append(c)
+                    mine._add_attribute(bit, c)
                     mine = c
             n = bits[-1].replace('-', '_')
-            if hasattr(mine, n):
+            if mine.attrs.has_key(n):
                 raise RuntimeError("Already had something: %s for %s" % (n, name))
-            setattr(mine, n, ConfigMethod('/'.join(bits), self.protocol, takes_arg))
+            mine._add_attribute(n, ConfigMethod('/'.join(bits), self.protocol, takes_arg))
+
+        for c in added_magic:
+            c._setup_complete()
         return None
+
+    def _setup_complete(self, *args):
+        self._setup = True

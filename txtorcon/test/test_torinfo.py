@@ -26,7 +26,7 @@ class FakeControlProtocol:
             d = defer.Deferred()
             self.pending.append(d)
             return d
-        
+
         d = defer.succeed(self.answers[0])
         self.answers = self.answers[1:]
         return d
@@ -41,7 +41,7 @@ class CheckAnswer:
         self.test.assertTrue(x == self.answer)
 
 class InfoTests(unittest.TestCase):
-    
+
     def setUp(self):
         self.protocol = FakeControlProtocol([])
 
@@ -93,8 +93,8 @@ something/one a documentation string
 
     def test_prefix_error_other_order(self):
         self.protocol.answers.append('''info/names=
-something/one a documentation string
-something not allowed I hope    
+other/one a documentation string
+other not allowed I hope    
 ''')
         self.error_happened = False
         info = TorInfo(self.protocol, self.handle_error)
