@@ -40,15 +40,14 @@ class MagicContainer(object):
             try:
                 return attrs[name]
             except KeyError:
+                if name in ['dump']:
+                    return object.__getattribute__(self, name)
                 raise AttributeError(name)
 
     def dump(self, prefix):
-        prefix = prefix + '.' + self.name
-        for x in dir(self):
-            try:
-                getattr(self, x).dump(prefix)
-            except:
-                pass
+        prefix = prefix + '.' + object.__getattribute__(self, 'name')
+        for x in object.__getattribute__(self, 'attrs').values():
+            x.dump(prefix)
 
 class ConfigMethod(object):
     def __init__(self, info_key, protocol, takes_arg=False):
@@ -161,11 +160,8 @@ class TorInfo(object):
         self.post_bootstrap = None
 
     def dump(self):
-        for x in dir(self):
-            try:
-                getattr(self, x).dump('')
-            except:
-                pass
+        for x in object.__getattribute__(self, 'attrs').values():
+            x.dump('')
 
     def _do_setup(self, data):
         added_magic = []
