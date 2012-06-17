@@ -78,6 +78,22 @@ something/two a second documentation string
         d.addCallback(CheckAnswer(self, 'bar'))
         return d
 
+    def test_attribute_access(self):
+        '''
+        test that our post-setup TorInfo pretends to only have
+        attributes that correspond to (valid) GETINFO calls.
+        '''
+
+        self.protocol.answers.append('''info/names=
+something/one a documentation string
+something/two a second documentation string
+''')
+        info = TorInfo(self.protocol)
+
+        self.assertTrue(dir(info) == ['something'])
+        self.assertTrue(dir(info.something) == ['one', 'two'] or \
+                        dir(info.something) == ['two', 'one'])
+
     def handle_error(self, f):
         if 'Already had something' in f.getErrorMessage():
             self.error_happened = True
