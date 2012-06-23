@@ -40,6 +40,19 @@ class CheckAnswer:
     def __call__(self, x):
         self.test.assertTrue(x == self.answer)
 
+class MagicContainerTests(unittest.TestCase):
+
+    def test_repr(self):
+        from txtorcon.torinfo import MagicContainer
+        m = MagicContainer('foo')
+        self.assertTrue(repr(m) == 'foo')
+        self.assertTrue(str(m) == 'foo')
+        
+        m._setup_complete()
+        self.assertTrue(repr(m) == 'foo')
+        self.assertTrue(str(m) == 'foo')
+        
+    
 class InfoTests(unittest.TestCase):
 
     def setUp(self):
