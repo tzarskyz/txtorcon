@@ -21,32 +21,29 @@ from txtorcon.torinfo import MagicContainer, ConfigMethod
 def dump(x):
     print x
 
-def last_one(x):
-    print x
-    reactor.stop()
-
 def recursive_dump(indent, obj):
-    ## FIXME need nicer way to detect leaves?
-    if hasattr(obj, '__call__'):
+    if callable(obj):
         print "%s %s()" % (indent, obj.info_key)
-        return
+        if obj.takes_arg:
+            return obj('an arg!').addCallback(dump)
+        return obj().addCallback(dump)
     
     print indent,obj
     indent = indent + '  '
-    for x in dir(obj):
-        ## FIXME make TorInfo and MagicContainer iterable so we can
-        ## just do "for x in obj" instead
-        recursive_dump(indent, getattr(obj, x))
+    for x in obj:
+        r = recursive_dump(indent, x)
+    return r
 
 def setup_complete(info):
     print "Got info"
     print dir(info)
-    recursive_dump('', info)
+    recursive_dump('', info).addCallback(lambda x: reactor.stop())
+    return
     info.version().addCallback(dump)
     info.ip_to_country('1.2.3.4').addCallback(dump)
     info.status.bootstrap_phase().addCallback(dump)
     info.ns.name('moria1').addCallback(dump)
-    info.features.names().addCallback(last_one)
+    info.features.names().addCallback(dump).addCallback(lambda x: reactor.stop())
     
 def setup_failed(arg):
     print "SETUP FAILED",arg
