@@ -27,6 +27,9 @@ class MagicContainer(object):
     def _add_attribute(self, n, v):
         self.attrs[n] = v
 
+    def __repr__(self):
+        return object.__getattribute__(self, 'name')
+
     def __getattribute__(self, name):
         sup = super(MagicContainer, self)
         if sup.__getattribute__('_setup') == False:
@@ -158,13 +161,8 @@ class TorInfo(object):
         return f
 
     def bootstrap(self, *args):
-        d = self.protocol.get_info_raw("info/names").addCallback(self._do_setup).addErrback(self.errback).addCallback(self.do_post_bootstrap).addCallback(self._setup_complete)
+        d = self.protocol.get_info_raw("info/names").addCallback(self._do_setup).addErrback(self.errback).addCallback(self._setup_complete)
         return d
-
-
-    def do_post_bootstrap(self, *args):
-        self.post_bootstrap.callback(self)
-        self.post_bootstrap = None
 
     def dump(self):
         for x in object.__getattribute__(self, 'attrs').values():
@@ -218,4 +216,6 @@ class TorInfo(object):
         return None
 
     def _setup_complete(self, *args):
+        pb = self.post_bootstrap
         self._setup = True
+        pb.callback(self)
