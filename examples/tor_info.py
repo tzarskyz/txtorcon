@@ -25,9 +25,23 @@ def last_one(x):
     print x
     reactor.stop()
 
+def recursive_dump(indent, obj):
+    ## FIXME need nicer way to detect leaves?
+    if hasattr(obj, '__call__'):
+        print "%s %s()" % (indent, obj.info_key)
+        return
+    
+    print indent,obj
+    indent = indent + '  '
+    for x in dir(obj):
+        ## FIXME make TorInfo and MagicContainer iterable so we can
+        ## just do "for x in obj" instead
+        recursive_dump(indent, getattr(obj, x))
+
 def setup_complete(info):
     print "Got info"
-    info.dump()
+    print dir(info)
+    recursive_dump('', info)
     info.version().addCallback(dump)
     info.ip_to_country('1.2.3.4').addCallback(dump)
     info.status.bootstrap_phase().addCallback(dump)
