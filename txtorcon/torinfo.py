@@ -31,29 +31,26 @@ class MagicContainer(object):
         return object.__getattribute__(self, '_txtorcon_name')
 
     def __getitem__(self, idx):
-        return self.attrs.items()[idx][1]
+        return object.__getattribute__(self, 'attrs').items()[idx][1]
     def __len__(self):
-        return len(self.attrs)
-    def __getattr__(self, k):
-        print "BING",k,self.attrs[k]
-        return self.attrs[k]
+        return len(object.__getattribute__(self, 'attrs'))
 
-#     def __getattribute__(self, name):
-#         sup = super(MagicContainer, self)
-#         if sup.__getattribute__('_setup') == False:
-#             return sup.__getattribute__(name)
+    def __getattribute__(self, name):
+        sup = super(MagicContainer, self)
+        if sup.__getattribute__('_setup') == False:
+            return sup.__getattribute__(name)
 
-#         attrs = sup.__getattribute__('attrs')
-#         if name == '__members__':
-#             return attrs.keys()
+        attrs = sup.__getattribute__('attrs')
+        if name == '__members__':
+            return attrs.keys()
 
-#         else:
-#             try:
-#                 return attrs[name]
-#             except KeyError:
-#                 if name in ['dump']:
-#                     return object.__getattribute__(self, name)
-#                 raise AttributeError(name)
+        else:
+            try:
+                return attrs[name]
+            except KeyError:
+                if name in ['dump']:
+                    return object.__getattribute__(self, name)
+                raise AttributeError(name)
 
     def dump(self, prefix):
         prefix = prefix + '.' + object.__getattribute__(self, '_txtorcon_name')
@@ -147,30 +144,27 @@ class TorInfo(object):
         self.attrs[n] = v
 
     def __getitem__(self, idx):
-        return self.attrs.items()[idx][1]
+        return object.__getattribute__(self, 'attrs').items()[idx][1]
     def __len__(self):
-        return len(self.attrs)
-    def __getattr__(self, k):
-        print "BING",k,self.attrs[k]
-        return self.attrs[k]
-    
-    
-#     def __getattribute__(self, name):
-#         sup = super(TorInfo, self)
-#         if sup.__getattribute__('_setup') == False:
-#             return sup.__getattribute__(name)
+        return len(object.__getattribute__(self, 'attrs'))
 
-#         attrs = sup.__getattribute__('attrs')
-#         if name == '__members__':
-#             return attrs.keys()
+    def __getattribute__(self, name):
+        sup = super(TorInfo, self)
+        if sup.__getattribute__('_setup') == False:
+            return sup.__getattribute__(name)
 
-#         else:
-#             try:
-#                 return attrs[name]
-#             except KeyError:
-#                 if name in ['dump']:
-#                     return object.__getattribute__(self, name)
-#                 raise AttributeError(name)
+        attrs = sup.__getattribute__('attrs')
+        if name == '__members__':
+            return attrs.keys()
+
+        else:
+            try:
+                #return object.__getattribute__(self, 'attrs')[name]
+                return attrs[name]
+            except KeyError:
+                if name in ['dump']:
+                    return object.__getattribute__(self, name)
+                raise AttributeError(name)
             
     def _handle_error(self, f):
         '''FIXME: do we really need this?'''

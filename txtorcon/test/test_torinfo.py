@@ -107,6 +107,29 @@ something/two a second documentation string
         self.assertTrue(dir(info.something) == ['one', 'two'] or \
                         dir(info.something) == ['two', 'one'])
 
+    def test_iterator_access(self):
+        '''
+        confirm we can use the iterator protocol
+        '''
+
+        self.protocol.answers.append('''info/names=
+something/one a documentation string
+something/two a second documentation string
+''')
+        info = TorInfo(self.protocol)
+
+        self.assertTrue(len(info) == 1)
+        all = []
+        for x in info:
+            all.append(x)
+        self.assertTrue(len(all) == 1)
+
+        self.assertTrue(len(info.something) == 2)
+        all = []
+        for x in info.something:
+            all.append(x)
+        self.assertTrue(len(all) == 2)
+
     def handle_error(self, f):
         if 'Already had something' in f.getErrorMessage():
             self.error_happened = True
