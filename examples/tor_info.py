@@ -20,7 +20,6 @@
 import os
 import sys
 import stat
-import types
 
 from twisted.python import log
 from twisted.internet import reactor, defer
@@ -29,48 +28,55 @@ from twisted.internet.endpoints import UNIXClientEndpoint
 from zope.interface import implements
 
 from txtorcon import TorProtocolFactory, TorInfo
-from txtorcon.torinfo import MagicContainer, ConfigMethod
 
-def dump(x):
-    print str(x)
 def error(x):
     print "ERROR",x
+    return x
 
-def recursive_dump(indent, obj):
-    print "RD",obj
+@defer.inlineCallbacks
+def recursive_dump(indent, obj, depth=0):
     if callable(obj):
-        print "%s %s()" % (indent, obj.info_key)
-        if obj.takes_arg:
-            return obj('an arg!').addCallback(dump).addErrback(error)
-        return obj().addCallback(dump).addErrback(error)
-    
-    print indent,obj
-    indent = indent + '  '
-    d = None
-    for x in obj:
-        d2 = recursive_dump(indent, x)
-        if d:
-            d2.chainDeferred(d)
-        d = d2
-    print 'returning',d,dir(d)
-    return d
+        try:
+            print "%s: " % obj,
+            sys.stdout.flush()
+            if obj.takes_arg:
+                v = yield obj('arrrrrg')
+            v = yield obj()
+            v = v.replace('\n','\\')
+            if len(v) > 60:
+                v = v[:50] + '...' + v[-7:]
+        except Exception, e:
+            v = 'ERROR: ' + str(e)
+        print v
 
+    else:
+        indent = indent + '  '
+        for x in obj:
+            yield recursive_dump(indent, x, depth+1)
+
+@defer.inlineCallbacks
 def setup_complete(info):
-    print "Got info object",info
-    print "top-level things:",dir(info)
+    print "Top-Level Things:",dir(info)
 
-    if False:
+    if True:
         ## some examples of getting specific GETINFO callbacks
-        info.version().addCallback(dump)
-        info.ip_to_country('1.2.3.4').addCallback(dump)
-        info.status.bootstrap_phase().addCallback(dump)
-        info.ns.name('moria1').addCallback(dump)
-        #info.features.names().addCallback(dump).addCallback(lambda x: reactor.stop())
+        v = yield info.version()
+        ip = yield info.ip_to_country('1.2.3.4')
+        boot_phase = yield info.status.bootstrap_phase()
+        ns = yield info.ns.name('moria1')
+        guards = yield info.entry_guards()
 
-    ## this will dump everything
-    recursive_dump('', info).addCallback(lambda x: reactor.stop()).addErrback(error)
+        print 'version:',v
+        print '1.2.3.4 is in',ip
+        print 'bootstrap-phase:',boot_phase
+        print 'moria1:',ns
+        print 'entry guards:',guards
 
-    
+    ## now we dump everything, one at a time
+    d = recursive_dump('', info)
+    d.addCallback(lambda x: reactor.stop())
+    d.addErrback(error)
+
 def setup_failed(arg):
     print "SETUP FAILED",arg
     reactor.stop()
@@ -81,7 +87,7 @@ def bootstrap(c):
 
 point = None
 try:
-    ## FIXME more Pythonic to not check, and accept more exceptions
+    ## FIXME more Pythonic to not check, and accept more exceptions?
     if os.stat('/var/run/tor/control').st_mode & (stat.S_IRGRP | stat.S_IRUSR | stat.S_IROTH):
         print "using control socket"
         point = UNIXClientEndpoint(reactor, "/var/run/tor/control")
@@ -90,7 +96,7 @@ except OSError:
 
 if point is None:
     point = TCP4ClientEndpoint(reactor, "localhost", 9051)
-    
+
 d = point.connect(TorProtocolFactory())
 # do not use addCallbacks() here, in case bootstrap has an error
 d.addCallback(bootstrap).addErrback(setup_failed)
