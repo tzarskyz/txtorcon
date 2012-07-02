@@ -83,15 +83,25 @@ class ConfigMethod(object):
             
             req = self.info_key
 
-        def strip_dict(k, d):
-            return d[k]
-        
-        return self.proto.get_info(req).addCallback(functools.partial(strip_dict, req))
+        def stripper(key, arg):
+            ## TorControlProtocl strips everything except the trailing
+            ## OK, which is a FIXME/TODO item
+            ## strip "keyname=" and the trailing newline + OK
+            ## sometimes keyname= is followed by a newline, so the final .strip()
+            return arg.strip()[len(key)+1:-3].strip()
+
+        return self.proto.get_info_raw(req).addCallback(functools.partial(stripper, req))
+
+    def __str__(self):
+        arg = ''
+        if self.takes_arg:
+            arg = 'arg'
+        return '%s(%s)' % (self.info_key.replace('-','_'), arg)
 
 class TorInfo(object):
     """
     Implements some attribute magic over top of TorControlProtocol so
-    that all the available GETINFO values are available in a little
+    that all the available GETINFO values are gettable in a little
     easier fashion. Dashes are replaced by underscores (since dashes
     aren't valid in method/attribute names for Python). Some of the
     magic methods will take a single string argument if the
@@ -100,13 +110,13 @@ class TorInfo(object):
     the method returns a Deferred which will callback with the
     requested value, always a string.
 
-    For example:
+    For example (see also examples/tor_info.py):
 
-        cont = TorControlProtocol()
+        proto = TorControlProtocol()
         #...
         def cb(arg):
             print arg
-        info = TorInfo(cont)
+        info = TorInfo(proto)
         info.traffic.written().addCallback(cb)
         info.ip_to_country('8.8.8.8').addCallback(cb)
 
@@ -117,9 +127,12 @@ class TorInfo(object):
     course in practice this is a much longer list). And "dir(info.traffic)" might
     return ['read', 'written']
 
-    For something like this for config (GETCONF, SETCONF) see
-    TorConfig which is quite a lot more complicated (internally) since you can change
-    config.
+    For something similar to this for configuration (GETCONF, SETCONF) see
+    TorConfig which is quite a lot more complicated (internally) since you can set
+    config items.
+
+    NOTE that 'GETINFO config/*' is not supported as it's the only case that's not a
+    leaf, but theoretically a method.
     """
 
     def __init__(self, control, errback=None):
@@ -128,10 +141,7 @@ class TorInfo(object):
         '''After _setup is True, these are all we show as attributes.'''
         
         self.protocol = ITorControlProtocol(control)
-        if errback is None:
-            self.errback = self._handle_error
-        else:
-            self.errback = errback
+        self.errback = errback
 
         self.post_bootstrap = defer.Deferred()
         if self.protocol.post_bootstrap:
@@ -143,10 +153,14 @@ class TorInfo(object):
     def _add_attribute(self, n, v):
         self.attrs[n] = v
 
+    ## iterator protocol
+
     def __getitem__(self, idx):
         return object.__getattribute__(self, 'attrs').items()[idx][1]
     def __len__(self):
         return len(object.__getattribute__(self, 'attrs'))
+
+    ## change our attribute behavior based on the value of _setup
 
     def __getattribute__(self, name):
         sup = super(TorInfo, self)
@@ -159,20 +173,19 @@ class TorInfo(object):
 
         else:
             try:
-                #return object.__getattribute__(self, 'attrs')[name]
                 return attrs[name]
-            except KeyError:
-                if name in ['dump']:
-                    return object.__getattribute__(self, name)
-                raise AttributeError(name)
             
-    def _handle_error(self, f):
-        '''FIXME: do we really need this?'''
-        print "ERROR",f
-        return f
+            except KeyError:
+                if name == 'dump':
+                    return object.__getattribute__(self, name)
 
+        raise AttributeError(name)
+            
     def bootstrap(self, *args):
-        d = self.protocol.get_info_raw("info/names").addCallback(self._do_setup).addErrback(self.errback).addCallback(self._setup_complete)
+        d = self.protocol.get_info_raw("info/names").addCallback(self._do_setup)
+        if self.errback:
+            d.addErrback(self.errback)
+        d.addCallback(self._setup_complete)
         return d
 
     def dump(self):
@@ -180,6 +193,10 @@ class TorInfo(object):
             x.dump('')
 
     def _do_setup(self, data):
+        # FIXME figure out why network-status doesn't work (get nothing back from
+        # Tor it seems, although stem does get an answer). this is a space-separated
+        # list of ~2500 OR id's; could it be that LineReceiver can't handle it?
+        BLACKLIST = ['network-status']
         added_magic = []
         for line in data.split('\n'):
             if line == "info/names=" or line == "OK" or line.strip() == '':
@@ -190,16 +207,19 @@ class TorInfo(object):
             ## FIXME think about this -- this is the only case where
             ## there's something that's a directory
             ## (i.e. MagicContainer) AND needs to be a ConfigMethod as
-            ## well...but doesn't really see very useful. somewhat
+            ## well...but doesn't really seem very useful. Somewhat
             ## simpler to not support this case for now...
             if name == 'config/*':
                 continue
-            
+
+            elif name in BLACKLIST:
+                continue
+
             if name.endswith('/*'):
                 ## this takes an arg, so make a method
                 bits = name[:-2].split('/')
                 takes_arg = True
-                
+
             else:
                 bits = name.split('/')
                 takes_arg = False

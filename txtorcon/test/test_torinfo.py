@@ -38,7 +38,7 @@ class CheckAnswer:
         self.test = test
 
     def __call__(self, x):
-        self.test.assertTrue(x == self.answer)
+        self.test.assertEqual(x, self.answer)
 
 class MagicContainerTests(unittest.TestCase):
 
@@ -68,7 +68,7 @@ multi/path a documentation string
         self.assertTrue(hasattr(info, 'multi'))
         self.assertTrue(hasattr(getattr(info,'multi'), 'path'))
 
-        self.protocol.answers.append({'something': 'foo'})
+        self.protocol.answers.append('something=\nfoo\nOK')
 
         d = info.something()
         d.addCallback(CheckAnswer(self, 'foo'))
@@ -85,7 +85,7 @@ something/two a second documentation string
         self.assertTrue(hasattr(info.something, 'one'))
         self.assertTrue(hasattr(info.something, 'two'))
 
-        self.protocol.answers.append({'something/two': 'bar'})
+        self.protocol.answers.append('something/two=bar\nOK')
 
         d = info.something.two()
         d.addCallback(CheckAnswer(self, 'bar'))
@@ -161,7 +161,7 @@ multi/path/arg/* a documentation string
         self.assertTrue(hasattr(getattr(info,'multi'), 'path'))
         self.assertTrue(hasattr(getattr(getattr(info,'multi'), 'path'), 'arg'))
 
-        self.protocol.answers.append({'multi/path/arg/quux': 'bar'})
+        self.protocol.answers.append('multi/path/arg/quux=\nbar\nbaz\nquux\nOK')
 
         try:
             info.multi.path.arg()
@@ -170,7 +170,7 @@ multi/path/arg/* a documentation string
             pass
         
         d = info.multi.path.arg('quux')
-        d.addCallback(CheckAnswer(self, 'bar'))
+        d.addCallback(CheckAnswer(self, 'bar\nbaz\nquux'))
         return d
 
     def test_with_arg_error(self):
