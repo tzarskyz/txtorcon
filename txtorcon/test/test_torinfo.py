@@ -209,3 +209,15 @@ multi/path/arg/* a documentation string
 ''')
         self.protocol.post_bootstrap = None
         info = TorInfo(self.protocol)
+
+    def test_str(self):
+        '''rather silly test to cover string creation'''
+        self.protocol.answers.append('''info/names=
+version docstring
+foo/* bar
+''')
+        info = TorInfo(self.protocol)
+
+        ## not the end of the world if this fails
+        self.assertTrue(str(info.version) == "version()")
+        self.assertTrue(str(info.foo) == "foo(arg)")
