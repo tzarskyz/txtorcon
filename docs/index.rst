@@ -46,7 +46,14 @@ This documentation was generated |today|.
 Releases:
 ---------
 
-- **June 6, 2012**: `txtorcon-0.4.tar.gz <txtorcon-0.4.tar.gz>`_ (`txtorcon-0.4.tar.gz.sig <txtorcon-0.4.tar.gz.sig>`_)
+..comment:
+  - **XXX, 2012**: `txtorcon-0.6.tar.gz <txtorcon-0.6.tar.gz>`_ (`txtorcon-0.6.tar.gz.sig <txtorcon-0.6.tar.gz.sig>`_)
+    This release adds: debian packaging (mmaker); psutil fully gone; TorConfig.save() works properly with no connected Tor; fix incorrect handling of 650 immediately after connect; pep8 compliance; use assertEqual in tests; messages with embdedded keywords work properly; ...
+
+- **June 20, 2012**: `txtorcon-0.5.tar.gz <txtorcon-0.5.tar.gz>`_ (`txtorcon-0.5.tar.gz.sig <txtorcon-0.5.tar.gz.sig>`_)
+  This release adds: remove psutil as a dependency, including from `util.process_from_address`
+
+- June 6, 2012: `txtorcon-0.4.tar.gz <txtorcon-0.4.tar.gz>`_ (`txtorcon-0.4.tar.gz.sig <txtorcon-0.4.tar.gz.sig>`_)
   This release adds: remove built documentation from distribution; fix PyPI problems ("pip install txtorcon" now works)
 
 - 0.3 was broken when released (docs couldn't build).

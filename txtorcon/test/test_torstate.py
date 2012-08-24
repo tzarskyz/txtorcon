@@ -9,7 +9,7 @@ import os
 import psutil
 import subprocess
 
-from txtorcon import TorControlProtocol, TorState, Stream, Circuit, build_tor_connection
+from txtorcon import TorControlProtocol, TorProtocolError, TorState, Stream, Circuit, build_tor_connection
 from txtorcon.interface import ITorControlProtocol, IStreamAttacher, ICircuitListener, IStreamListener, StreamListenerMixin, CircuitListenerMixin
 
 def do_nothing(*args):
@@ -91,12 +91,12 @@ class FakeReactor:
         self.test = test
 
     def addSystemEventTrigger(self, *args):
-        self.test.assertTrue(args[0] == 'before')
-        self.test.assertTrue(args[1] == 'shutdown')
-        self.test.assertTrue(args[2] == self.test.state.undo_attacher)
+        self.test.assertEqual(args[0], 'before')
+        self.test.assertEqual(args[1], 'shutdown')
+        self.test.assertEqual(args[2], self.test.state.undo_attacher)
         return 1
     def removeSystemEventTrigger(self, id):
-        self.test.assertTrue(id == 1)
+        self.test.assertEqual(id, 1)
 
 class FakeCircuit:
     def __init__(self, id=-999):
@@ -123,6 +123,35 @@ class FakeEndpoint:
 
         return defer.succeed(self.proto)
 
+class FakeEndpointAnswers:
+    implements(IStreamClientEndpoint)
+
+    def __init__(self, answers):
+        self.answers = answers
+        # since we use pop() we need these to be "backwards"
+        self.answers.reverse()
+
+    def get_info_raw(self, keys):
+        ans = ''
+        for k in keys.split():
+            if len(self.answers) == 0:
+                raise TorProtocolError(551, "ran out of answers")
+            ans += '%s=%s\r\n' % (k, self.answers.pop())
+        return ans[:-2]                 # don't want trailing \r\n
+
+    def get_info_incremental(self, key, linecb):
+        linecb('%s=%s' % (key, self.answers.pop()))
+        return defer.succeed('')
+
+    def connect(self, protocol_factory):
+        self.proto = TorControlProtocol()
+        self.proto.transport = proto_helpers.StringTransport()
+        self.proto.get_info_raw = self.get_info_raw
+        self.proto.get_info_incremental = self.get_info_incremental
+        self.proto._set_valid_events('GUARD STREAM CIRC NS NEWCONSENSUS ORCONN NEWDESC ADDRMAP STATUS_GENERAL')
+
+        return defer.succeed(self.proto)
+
 class FakeControlProtocol:
     implements(ITorControlProtocol)     # actually we don't, it's a lie
 
@@ -131,61 +160,6 @@ class FakeControlProtocol:
         self.post_bootstrap = defer.succeed(self)
 
 class InternalMethodsTests(unittest.TestCase):
-
-    def test_guess_pid_owned(self):
-        """
-        Make sure our PID-guessing code uses a known owned process
-        properly.
-        """
-        
-        state = TorState(FakeControlProtocol(), bootstrap=False)
-        state.protocol.is_owned = 1234
-
-        state.guess_tor_pid()
-        self.assertTrue(state.tor_pid == 1234)
-        
-    def test_guess_pid(self):
-        """
-        this is kind of hard to test, and borders on testing psutil.
-        """
-        
-        ## kneufeld points out there is no "init" on osx ("launchd")
-        ## or newer fedora ("systemd")...
-        torpid = 1
-
-        state = TorState(FakeControlProtocol(), bootstrap=False)
-        state.tor_binary = 'init'
-        state.guess_tor_pid()
-        guess = state.tor_pid
-        if guess == 0:
-            print "Didn't find any \"%s\" on this system." % state.tor_binary
-            ## unsupported system; we didn't find any 'init' process
-            return
-        self.assertTrue(guess == torpid)
-        
-    def test_guess_pid_multiple(self):
-        """
-        make at least two python processes, name the tor_binary to
-        'python' and ensure we don't try to report a PID in such a
-        case.
-        """
-
-        one = subprocess.Popen(['python'], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
-        two = subprocess.Popen(['python'], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
-        try:
-            procs = filter(lambda x: x.name.startswith('python'),
-                           psutil.get_process_list())
-
-            state = TorState(FakeControlProtocol(), bootstrap=False)
-            state.tor_binary = 'python'
-            state.guess_tor_pid()
-
-        finally:
-            one.kill()
-            two.kill()
-
-        self.assertTrue(len(procs) >= 2)
-        self.assertTrue(state.tor_pid == 0)
 
     def test_state_diagram(self):
         state = TorState(FakeControlProtocol(), bootstrap=False, write_state_diagram=True)
@@ -200,6 +174,7 @@ class BootstrapTests(unittest.TestCase):
     def confirm_state(self, x):
         self.assertTrue(isinstance(x, TorState))
         self.assertTrue(x.post_bootstrap.called)
+        return x
 
     def test_build(self):
         p = FakeEndpoint()
@@ -208,10 +183,38 @@ class BootstrapTests(unittest.TestCase):
         p.proto.post_bootstrap.callback(p.proto)
         return d
 
-    def test_build_state(self):
-        p = FakeEndpoint()
+    def confirm_pid(self, state):
+        self.assertEqual(state.tor_pid, 1234)
+
+    def confirm_no_pid(self, state):
+        self.assertEqual(state.tor_pid, 0)
+
+    def test_build_with_answers(self):
+        p = FakeEndpointAnswers(['',    # ns/all
+                                 '',    # circuit-status
+                                 '',    # stream-status
+                                 '',    # address-mappings/all
+                                 '',    # entry-guards
+                                 '1234' # PID
+                                 ])
+
+        d = build_tor_connection(p, build_state=True)
+        d.addCallback(self.confirm_state).addErrback(self.fail)
+        d.addCallback(self.confirm_pid).addErrback(self.fail)
+        p.proto.post_bootstrap.callback(p.proto)
+        return d
+
+    def test_build_with_answers_no_pid(self):
+        p = FakeEndpointAnswers(['',    # ns/all
+                                 '',    # circuit-status
+                                 '',    # stream-status
+                                 '',    # address-mappings/all
+                                 ''     # entry-guards
+                                 ])
+
         d = build_tor_connection(p, build_state=True)
         d.addCallback(self.confirm_state)
+        d.addCallback(self.confirm_no_pid)
         p.proto.post_bootstrap.callback(p.proto)
         return d
 
@@ -247,7 +250,7 @@ class StateTests(unittest.TestCase):
     def test_single_streams(self):
         self.state.circuits[496] = FakeCircuit(496)
         self.state._stream_status('stream-status=123 SUCCEEDED 496 www.example.com:6667\r\nOK')
-        self.assertTrue(len(self.state.streams) == 1)
+        self.assertEqual(len(self.state.streams), 1)
 
     def send(self, line):
         self.protocol.dataReceived(line.strip() + "\r\n")
@@ -290,15 +293,21 @@ class StateTests(unittest.TestCase):
         self.send(".")
         self.send("250 OK")
 
+        ## implicitly created Router object for the $1111...11 lookup
+        ## but 0.0.0.0 will have to country, so Router will ask Tor
+        ## for one via GETINFO ip-to-country
+        self.send("250-ip-to-country/0.0.0.0=??")
         self.send("250 OK")
 
-        self.assertTrue(len(self.state.entry_guards) == 1)
-        self.assertTrue(self.state.entry_guards.has_key('$0000000000000000000000000000000000000000'))
-        self.assertTrue(self.state.entry_guards.values()[0] == fakerouter)
+        self.send("250 OK")
 
-        self.assertTrue(len(self.state.unusable_entry_guards) == 2)
-        self.assertTrue('$1111111111111111111111111111111111111111' in self.state.unusable_entry_guards[0])
-        self.assertTrue('$9999999999999999999999999999999999999999' in self.state.unusable_entry_guards[1])
+        self.assertEqual(len(self.state.entry_guards), 2)
+        self.assertTrue(self.state.entry_guards.has_key('$0000000000000000000000000000000000000000'))
+        self.assertEqual(self.state.entry_guards['$0000000000000000000000000000000000000000'], fakerouter)
+        self.assertTrue(self.state.entry_guards.has_key('$1111111111111111111111111111111111111111'))
+
+        self.assertEqual(len(self.state.unusable_entry_guards), 1)
+        self.assertTrue('$9999999999999999999999999999999999999999' in self.state.unusable_entry_guards[0])
         
         return d
         
@@ -341,7 +350,7 @@ class StateTests(unittest.TestCase):
 
         self.send("250 OK")
 
-        self.assertTrue(len(self.state.addrmap.addr) == 2)
+        self.assertEqual(len(self.state.addrmap.addr), 2)
         self.assertTrue(self.state.addrmap.addr.has_key('www.example.com'))
         self.assertTrue(self.state.addrmap.addr.has_key('subdomain.example.com'))
 
@@ -358,7 +367,7 @@ class StateTests(unittest.TestCase):
         self.send("250 OK")
         self.state.set_attacher(None, fr)
         self.send("250 OK")
-        self.assertTrue(self.transport.value() == 'SETCONF __LeaveStreamsUnattached=1\r\nSETCONF __LeaveStreamsUnattached=0\r\n')
+        self.assertEqual(self.transport.value(), 'SETCONF __LeaveStreamsUnattached=1\r\nSETCONF __LeaveStreamsUnattached=0\r\n')
         
     def test_attacher(self):
         class MyAttacher(object):
@@ -382,23 +391,23 @@ class StateTests(unittest.TestCase):
 
         self.send("650 STREAM 1 NEW 0 ca.yahoo.com:80 SOURCE_ADDR=127.0.0.1:54327 PURPOSE=USER")
         self.send("650 STREAM 1 REMAP 0 87.248.112.181:80 SOURCE=CACHE")
-        self.assertTrue(len(attacher.streams) == 1)
-        self.assertTrue(attacher.streams[0].id == 1)
-        self.assertTrue(len(self.protocol.commands) == 1)
-        self.assertTrue(self.protocol.commands[0][1] == 'ATTACHSTREAM 1 0')
+        self.assertEqual(len(attacher.streams), 1)
+        self.assertEqual(attacher.streams[0].id, 1)
+        self.assertEqual(len(self.protocol.commands), 1)
+        self.assertEqual(self.protocol.commands[0][1], 'ATTACHSTREAM 1 0')
 
         # we should totally ignore .exit URIs
         attacher.streams = []
         self.send("650 STREAM 2 NEW 0 10.0.0.0.$E11D2B2269CC25E67CA6C9FB5843497539A74FD0.exit:80 SOURCE_ADDR=127.0.0.1:12345 PURPOSE=TIME")
-        self.assertTrue(len(attacher.streams) == 0)
-        self.assertTrue(len(self.protocol.commands) == 1)
+        self.assertEqual(len(attacher.streams), 0)
+        self.assertEqual(len(self.protocol.commands), 1)
 
         # we should NOT ignore .onion URIs
         attacher.streams = []
         self.send("650 STREAM 3 NEW 0 xxxxxxxxxxxxxxxx.onion:80 SOURCE_ADDR=127.0.0.1:12345 PURPOSE=TIME")
-        self.assertTrue(len(attacher.streams) == 1)
-        self.assertTrue(len(self.protocol.commands) == 2)
-        self.assertTrue(self.protocol.commands[1][1] == 'ATTACHSTREAM 3 0')
+        self.assertEqual(len(attacher.streams), 1)
+        self.assertEqual(len(self.protocol.commands), 2)
+        self.assertEqual(self.protocol.commands[1][1], 'ATTACHSTREAM 3 0')
 
         # normal attach
         circ = FakeCircuit(1)
@@ -406,9 +415,9 @@ class StateTests(unittest.TestCase):
         self.state.circuits[1] = circ
         attacher.answer = circ
         self.send("650 STREAM 4 NEW 0 xxxxxxxxxxxxxxxx.onion:80 SOURCE_ADDR=127.0.0.1:12345 PURPOSE=TIME")
-        self.assertTrue(len(attacher.streams) == 2)
-        self.assertTrue(len(self.protocol.commands) == 3)
-        self.assertTrue(self.protocol.commands[2][1] == 'ATTACHSTREAM 4 1')
+        self.assertEqual(len(attacher.streams), 2)
+        self.assertEqual(len(self.protocol.commands), 3)
+        self.assertEqual(self.protocol.commands[2][1], 'ATTACHSTREAM 4 1')
 
     def test_attacher_defer(self):
         class MyAttacher(object):
@@ -436,10 +445,10 @@ class StateTests(unittest.TestCase):
 
         self.send("650 STREAM 1 NEW 0 ca.yahoo.com:80 SOURCE_ADDR=127.0.0.1:54327 PURPOSE=USER")
         self.send("650 STREAM 1 REMAP 0 87.248.112.181:80 SOURCE=CACHE")
-        self.assertTrue(len(attacher.streams) == 1)
-        self.assertTrue(attacher.streams[0].id == 1)
-        self.assertTrue(len(self.protocol.commands) == 1)
-        self.assertTrue(self.protocol.commands[0][1] == 'ATTACHSTREAM 1 1')
+        self.assertEqual(len(attacher.streams), 1)
+        self.assertEqual(attacher.streams[0].id, 1)
+        self.assertEqual(len(self.protocol.commands), 1)
+        self.assertEqual(self.protocol.commands[0][1], 'ATTACHSTREAM 1 1')
 
 
     def test_attacher_errors(self):
@@ -496,10 +505,10 @@ class StateTests(unittest.TestCase):
         self.transport.clear()
         self.send("650 STREAM 1 NEW 0 ca.yahoo.com:80 SOURCE_ADDR=127.0.0.1:54327 PURPOSE=USER")
         self.send("650 STREAM 1 REMAP 0 87.248.112.181:80 SOURCE=CACHE")
-        self.assertTrue(len(attacher.streams) == 1)
-        self.assertTrue(attacher.streams[0].id == 1)
+        self.assertEqual(len(attacher.streams), 1)
+        self.assertEqual(attacher.streams[0].id, 1)
         print self.transport.value()
-        self.assertTrue(self.transport.value() == '')
+        self.assertEqual(self.transport.value(), '')
 
     def test_close_stream(self):
         stream = Stream(self.state)
@@ -512,7 +521,7 @@ class StateTests(unittest.TestCase):
         
         self.state.streams[1] = stream
         self.state.close_stream(stream)
-        self.assertTrue(self.transport.value() == 'CLOSESTREAM 1 1\r\n')
+        self.assertEqual(self.transport.value(), 'CLOSESTREAM 1 1\r\n')
 
     def test_circuit_destroy(self):
         self.state._circuit_update('365 LAUNCHED PURPOSE=GENERAL')
@@ -550,7 +559,7 @@ p reject 1-65535""")
         listen = CircuitListener(expected)
         ## first add a Circuit before we listen
         self.protocol.dataReceived("650 CIRC 123 LAUNCHED PURPOSE=GENERAL\r\n")
-        self.assertTrue(len(self.state.circuits) == 1)
+        self.assertEqual(len(self.state.circuits), 1)
 
         ## make sure we get added to existing circuits
         self.state.add_circuit_listener(listen)
@@ -558,14 +567,14 @@ p reject 1-65535""")
 
         ## now add a Circuit after we started listening
         self.protocol.dataReceived("650 CIRC 456 LAUNCHED PURPOSE=GENERAL\r\n")
-        self.assertTrue(len(self.state.circuits) == 2)
+        self.assertEqual(len(self.state.circuits), 2)
         self.assertTrue(listen in self.state.circuits.values()[0].listeners)
         self.assertTrue(listen in self.state.circuits.values()[1].listeners)
 
         ## now update the first Circuit to ensure we're really, really
         ## listening
         self.protocol.dataReceived("650 CIRC 123 EXTENDED $D82183B1C09E1D7795FF2D7116BAB5106AA3E60E~PPrivCom012 PURPOSE=GENERAL\r\n")
-        self.assertTrue(len(listen.expected) == 0)
+        self.assertEqual(len(listen.expected), 0)
 
     def confirm_router_state(self, x):
         self.assertTrue(self.state.routers.has_key('$624926802351575FF7E4E3D60EFA3BFB56E67E8A'))
@@ -580,7 +589,7 @@ p reject 1-65535""")
         self.assertTrue('v2dir' in router.flags)
         self.assertTrue('valid' in router.flags)
         self.assertTrue('futureproof' in router.flags)
-        self.assertTrue(router.bandwidth == 518000)
+        self.assertEqual(router.bandwidth, 518000)
         self.assertTrue(router.accepts_port(43))
         self.assertTrue(router.accepts_port(53))
         self.assertTrue(not router.accepts_port(44))
@@ -650,9 +659,9 @@ p accept 43,53
 .''')
         self.assertTrue(self.state.routers.has_key('$624926802351575FF7E4E3D60EFA3BFB56E67E8A'))
         r = self.state.routers['$624926802351575FF7E4E3D60EFA3BFB56E67E8A']
-        self.assertTrue(r.controller == self.state.protocol)
-        self.assertTrue(r.bandwidth == 518000)
-        self.assertTrue(len(self.state.routers_by_name['fake']) == 2)
+        self.assertEqual(r.controller, self.state.protocol)
+        self.assertEqual(r.bandwidth, 518000)
+        self.assertEqual(len(self.state.routers_by_name['fake']), 2)
 
         ## now we do an update
         self.state._update_network_status('''ns/all=
@@ -661,7 +670,7 @@ s Exit Fast Guard HSDir Named Running Stable V2Dir Valid FutureProof Authority
 w Bandwidth=543000
 p accept 43,53,79-81,110,143,194,220,443,953,989-990,993,995,1194,1293,1723,1863,2082-2083,2086-2087,2095-2096,3128,4321,5050,5190,5222-5223,6679,6697,7771,8000,8008,8080-8081,8090,8118,8123,8181,8300,8443,8888
 .''')
-        self.assertTrue(r.bandwidth == 543000)
+        self.assertEqual(r.bandwidth, 543000)
 
     def test_empty_stream_update(self):
         self.state._stream_update('''stream-status=''')
@@ -860,10 +869,10 @@ s Fast Guard Running Stable Valid
         self.state._stream_update('1610 NEW 0 1.2.3.4:56')
         self.assertTrue(self.state.streams.has_key(1610))
         self.state._stream_update("1610 SUCCEEDED 1 4.3.2.1:80")
-        self.assertTrue(self.state.streams[1610].circuit == circ)
+        self.assertEqual(self.state.streams[1610].circuit, circ)
         
         self.state._stream_update("1610 DETACHED 0 www.example.com:0 REASON=DONE REMOTE_REASON=FAILED")
-        self.assertTrue(self.state.streams[1610].circuit == None)
+        self.assertEqual(self.state.streams[1610].circuit, None)
 
     def test_stream_listener(self):
         self.protocol._set_valid_events('CIRC STREAM ORCONN BW DEBUG INFO NOTICE WARN ERR NEWDESC ADDRMAP AUTHDIR_NEWDESCS DESCCHANGED NS STATUS_GENERAL STATUS_CLIENT STATUS_SERVER GUARD STREAM_BW CLIENTS_SEEN NEWCONSENSUS BUILDTIMEOUT_SET')
@@ -878,12 +887,12 @@ s Fast Guard Running Stable Valid
         self.state.add_stream_listener(listen)
 
         self.assertTrue(listen in self.state.streams.values()[0].listeners)
-        self.assertTrue(len(self.state.streams) == 1)
-        self.assertTrue(len(listen.expected) == 1)
+        self.assertEqual(len(self.state.streams), 1)
+        self.assertEqual(len(listen.expected), 1)
 
         self.send("650 STREAM 78 NEW 0 www.yahoo.cn:80 SOURCE_ADDR=127.0.0.1:54315 PURPOSE=USER")
-        self.assertTrue(len(self.state.streams) == 2)
-        self.assertTrue(len(listen.expected) == 0)
+        self.assertEqual(len(self.state.streams), 2)
+        self.assertEqual(len(listen.expected), 0)
         
     def test_build_circuit(self):
         class FakeRouter:
@@ -899,14 +908,14 @@ s Fast Guard Running Stable Valid
         path[0].flags = ['guard']
 
         self.state.build_circuit(path)
-        self.assertTrue(self.transport.value() == 'EXTENDCIRCUIT 0 0000000000000000000000000000000000000000,0000000000000000000000000000000000000001,0000000000000000000000000000000000000002\r\n')
+        self.assertEqual(self.transport.value(), 'EXTENDCIRCUIT 0 0000000000000000000000000000000000000000,0000000000000000000000000000000000000001,0000000000000000000000000000000000000002\r\n')
         ## should have gotten a warning about this not being an entry
         ## guard
         self.assertEqual(len(self.flushWarnings()), 1)
 
     def circuit_callback(self, circ):
         self.assertTrue(isinstance(circ, Circuit))
-        self.assertTrue(circ.id == 1234)
+        self.assertEqual(circ.id, 1234)
 
     def test_build_circuit_final_callback(self):
         class FakeRouter:
@@ -926,7 +935,7 @@ s Fast Guard Running Stable Valid
 
         d = self.state.build_circuit(path)
         d.addCallback(self.circuit_callback)
-        self.assertTrue(self.transport.value() == 'EXTENDCIRCUIT 0 0000000000000000000000000000000000000000,0000000000000000000000000000000000000001,0000000000000000000000000000000000000002\r\n')
+        self.assertEqual(self.transport.value(), 'EXTENDCIRCUIT 0 0000000000000000000000000000000000000000,0000000000000000000000000000000000000001,0000000000000000000000000000000000000002\r\n')
         self.send('250 EXTENDED 1234')
         ## should have gotten a warning about this not being an entry
         ## guard
@@ -942,7 +951,7 @@ s Fast Guard Running Stable Valid
             self.state._find_circuit_after_extend("FOO 1234")
             self.assertTrue(False)
         except RuntimeError, e:
-            self.assertTrue('Expected EXTENDED' in e.message)
+            self.assertTrue('Expected EXTENDED' in str(e))
 
     def test_listener_mixins(self):
         smi = StreamListenerMixin
