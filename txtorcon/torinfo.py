@@ -196,7 +196,6 @@ class TorInfo(object):
         # FIXME figure out why network-status doesn't work (get nothing back from
         # Tor it seems, although stem does get an answer). this is a space-separated
         # list of ~2500 OR id's; could it be that LineReceiver can't handle it?
-        BLACKLIST = ['network-status']
         added_magic = []
         for line in data.split('\n'):
             if line == "info/names=" or line == "OK" or line.strip() == '':
@@ -210,9 +209,6 @@ class TorInfo(object):
             ## well...but doesn't really seem very useful. Somewhat
             ## simpler to not support this case for now...
             if name == 'config/*':
-                continue
-
-            elif name in BLACKLIST:
                 continue
 
             if name.endswith('/*'):
