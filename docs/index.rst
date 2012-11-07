@@ -41,25 +41,32 @@ Code available at https://github.com/meejah/txtorcon
 - meejah@meejah.ca (public key: `meejah.asc <meejah.asc>`_)
 - ``torsocks git clone git://timaq4ygg2iegci7.onion/txtorcon.git``
 - **``pip install txtorcon``**
+- ``git clone git://github.com/meejah/txtorcon.git``
 
 This documentation was generated |today|.
 
 Releases:
 ---------
+- **unreleased**: git master will become v0.7; 
+  *This release adds*:
 
- - *Not Yet Released*: `txtorcon-0.6.tar.gz <txtorcon-0.6.tar.gz>`_ (`txtorcon-0.6.tar.gz.sig <txtorcon-0.6.tar.gz.sig>`_)
-   *This release adds*:
-   debian packaging (mmaker);
-   psutil fully gone;
-   TorConfig.save() works properly with no connected Tor;
-   fix incorrect handling of 650 immediately after connect;
-   `pep8 compliance <http://www.python.org/dev/peps/pep-0008/>`_;
-   use assertEqual in tests;
-   messages with embdedded keywords work properly;
-   fix bug with setup.py + pip;
-   ...
+- *October 10, 2012*: `txtorcon-0.6.tar.gz <https://timaq4ygg2iegci7.onion/txtorcon-0.6.tar.gz>`_ (`txtorcon-0.6.tar.gz.sig <https://timaq4ygg2iegci7.onion/txtorcon-0.6.tar.gz.sig>`_) (`source <https://github.com/meejah/txtorcon/tarball/v0.6>`_)
+  *This release adds*:
+  debian packaging (mmaker);
+  psutil fully gone;
+  *changed API* for launch_tor() to use TorConfig instead of args;
+  TorConfig.save() works properly with no connected Tor;
+  fix incorrect handling of 650 immediately after connect;
+  `pep8 compliance <http://www.python.org/dev/peps/pep-0008/>`_;
+  use assertEqual in tests;
+  messages with embdedded keywords work properly;
+  fix bug with setup.py + pip;
+  `issue #15 <https://github.com/meejah/txtorcon/issues/15>`_ reported along with patch by `Isis Lovecruft <https://github.com/isislovecruft>`_;
+  consolidate requirements (from `aagbsn <https://github.com/aagbsn>`_);
+  increased test coverage and various minor fixes;
+  https URIs for ReadTheDocs;
 
-- June 20, 2012: `txtorcon-0.5.tar.gz <txtorcon-0.5.tar.gz>`_ (`txtorcon-0.5.tar.gz.sig <txtorcon-0.5.tar.gz.sig>`_)
+- June 20, 2012: `txtorcon-0.5.tar.gz <txtorcon-0.5.tar.gz>`_ (`txtorcon-0.5.tar.gz.sig <txtorcon-0.5.tar.gz.sig>`_) (`source <https://github.com/meejah/txtorcon/tarball/v0.5>`_)
   *This release adds*: remove psutil as a dependency, including from `util.process_from_address`
 
 - June 6, 2012: `txtorcon-0.4.tar.gz <txtorcon-0.4.tar.gz>`_ (`txtorcon-0.4.tar.gz.sig <txtorcon-0.4.tar.gz.sig>`_)

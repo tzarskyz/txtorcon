@@ -298,8 +298,6 @@ class StateTests(unittest.TestCase):
         self.send("250-ip-to-country/0.0.0.0=??")
         self.send("250 OK")
 
-        self.send("250 OK")
-
         self.assertEqual(len(self.state.entry_guards), 2)
         self.assertTrue(self.state.entry_guards.has_key('$0000000000000000000000000000000000000000'))
         self.assertEqual(self.state.entry_guards['$0000000000000000000000000000000000000000'], fakerouter)
@@ -352,6 +350,47 @@ class StateTests(unittest.TestCase):
         self.assertEqual(len(self.state.addrmap.addr), 2)
         self.assertTrue(self.state.addrmap.addr.has_key('www.example.com'))
         self.assertTrue(self.state.addrmap.addr.has_key('subdomain.example.com'))
+
+        return d
+
+    def test_bootstrap_single_existing_circuit(self):
+        '''
+        test with exactly one circuit. should probably test with 2 as
+        well, since there was a bug with the handling of just one.
+        '''
+        
+        d = self.state.post_bootstrap
+
+        clock = task.Clock()
+        self.state.addrmap.scheduler = clock
+        
+        self.protocol._set_valid_events(' '.join(self.state.event_map.keys()))
+        self.state._bootstrap()
+
+        self.send("250+ns/all=")
+        self.send(".")
+        self.send("250 OK")
+
+        self.send("250-circuit-status=123 BUILT PURPOSE=GENERAL")
+        self.send("250 OK")
+
+        self.send("250-stream-status=")
+        self.send("250 OK")
+
+        self.send("250+address-mappings/all=")
+        self.send('.')
+        self.send('250 OK')
+
+        for ignored in self.state.event_map.items():
+            self.send("250 OK")
+
+        self.send("250-entry-guards=")
+        self.send("250 OK")
+
+        self.send("250 OK")
+
+        self.assertTrue(self.state.find_circuit(123))
+        self.assertEquals(len(self.state.circuits), 1)
 
         return d
 
@@ -574,6 +613,14 @@ p reject 1-65535""")
         ## listening
         self.protocol.dataReceived("650 CIRC 123 EXTENDED $D82183B1C09E1D7795FF2D7116BAB5106AA3E60E~PPrivCom012 PURPOSE=GENERAL\r\n")
         self.assertEqual(len(listen.expected), 0)
+
+    def test_router_from_id_invalid_key(self):
+        self.failUnlessRaises(KeyError, self.state.router_from_id, 'somethingcompletelydifferent..thatis42long')
+
+    def test_router_from_named_router(self):
+        r = self.state.router_from_id('$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=foo')
+        self.assertEqual(r.id_hex, '$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+        self.assertEqual(r.unique_name, 'foo')
 
     def confirm_router_state(self, x):
         self.assertTrue(self.state.routers.has_key('$624926802351575FF7E4E3D60EFA3BFB56E67E8A'))

@@ -2,12 +2,12 @@ from util import NetLocation
 import types
 
 
-def hexIdFromHash(hash):
+def hexIdFromHash(thehash):
     """
     From the base-64 encoded hashes Tor uses, this produces the longer
     hex-encoded hashes.
     """
-    return '$' + (hash + "=").decode("base64").encode("hex").upper()
+    return "$" + (thehash + "=").decode("base64").encode("hex").upper()
 
 
 def hashFromHexId(hexid):
@@ -76,7 +76,7 @@ class Router(object):
         self.or_port = orport
         self.dir_port = dirport
         self.location = NetLocation(self.ip)
-        if self.location.countrycode is None:
+        if self.location.countrycode is None and self.ip != 'unknown':
             ## see if Tor is magic and knows more...
             self.controller.get_info_raw('ip-to-country/' + self.ip).addCallback(self._set_country)
 

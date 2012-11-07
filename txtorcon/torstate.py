@@ -466,8 +466,15 @@ class TorState(object):
                     self.protocol.queue_command("ATTACHSTREAM %d %d" % (stream.id, circ.id))
 
     def _circuit_status(self, data):
-        "Used internally as a callback for updating Circuit information"
-        for line in data.split('\n')[1:-1]:
+        """Used internally as a callback for updating Circuit information"""
+
+        data = data[len('circuit-status='):].split('\n')[:-1]
+        ## sometimes there's a newline after circuit-status= and
+        ## sometimes not, so we get rid of it
+        if len(data) and len(data[0].strip()) == 0:
+            data = data[1:]
+
+        for line in data:
             self._circuit_update(line)
 
     def _stream_status(self, data):
@@ -623,8 +630,9 @@ class TorState(object):
             is_named = False
             if len(routerid) > 41:
                 nick = routerid[42:]
-                is_named = routerid[42] is '='
+                is_named = routerid[41] is '='
             router.update(nick, hashFromHexId(idhash), '0'*27, 'unknown', 'unknown', '0', '0')
+            router.name_is_unique = is_named
             return router
 
     ## implement IStreamListener

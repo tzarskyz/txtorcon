@@ -388,9 +388,6 @@ def launch_tor(config, reactor,
     :param reactor: a Twisted IReactorCore implementation (usually
         twisted.internet.reactor)
 
-    :param control_port: which port the launched Tor process will
-        listen on; anything set in config is overridden.
-
     :param tor_binary: path to the Tor binary to run.
 
     :param progress_updates: a callback which gets progress updates; gets as
@@ -433,6 +430,7 @@ def launch_tor(config, reactor,
     try:
         user_set_data_directory = True
         data_directory = config.DataDirectory
+        user_set_data_directory = True
     except KeyError:
         user_set_data_directory = False
         data_directory = tempfile.mkdtemp(prefix='tortmp')
@@ -456,7 +454,9 @@ def launch_tor(config, reactor,
     config.CookieAuthentication = 1
     #config.SocksPort = 0
     config.__OwningControllerProcess = os.getpid()
+    config.save()
 
+    (fd, torrc) = tempfile.mkstemp(prefix='tortmp')
     os.write(fd, config.create_torrc())
     os.close(fd)
 
@@ -880,7 +880,7 @@ class TorConfig(object):
         except (RuntimeError, e):
             ## for Tor versions which don't understand CONF_CHANGED
             ## there's nothing we can really do.
-            log.warning("Can't listen for CONF_CHANGED event; won't stay up-to-date with other clients.")
+            log.msg("Can't listen for CONF_CHANGED event; won't stay up-to-date with other clients.")
         return self.protocol.get_info_raw("config/names").addCallbacks(self._do_setup, log.err).addCallback(self.do_post_bootstrap).addErrback(log.err)
 
     def do_post_bootstrap(self, *args):
