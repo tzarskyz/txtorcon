@@ -6,9 +6,9 @@ import functools
 from zope.interface import implements
 from twisted.trial import unittest
 from twisted.test import proto_helpers
-from twisted.internet import defer, error
+from twisted.internet import defer, error, task
 from twisted.python.failure import Failure
-from twisted.internet.interfaces import IReactorCore, IProtocolFactory, IReactorTCP
+from twisted.internet.interfaces import IReactorCore, IProtocolFactory, IReactorTCP, IReactorTime
 
 from txtorcon import TorControlProtocol, ITorControlProtocol, TorConfig, DEFAULT_VALUE, HiddenService, launch_tor, TCPHiddenServiceEndpoint
 
@@ -586,6 +586,14 @@ OK''')
         conf.hiddenservices[0].version = 3
         self.assertTrue(conf.needs_save())
         
+    def test_add_hidden_service_to_empty_config(self):
+        conf = TorConfig()
+        h = HiddenService(conf, '/fake/path', ['80 127.0.0.1:1234'], '', 3)
+        conf.hiddenservices.append(h)
+        self.assertEqual(len(conf.hiddenservices), 1)
+        self.assertEqual(h, conf.hiddenservices[0])
+        self.assertTrue(conf.needs_save())
+
     def test_multiple_startup_services(self):
         conf = TorConfig(FakeControlProtocol(['config/names=']))
         conf._setup_hidden_services('''HiddenServiceDir=/fake/path
@@ -653,10 +661,11 @@ HiddenServicePort=90 127.0.0.1:2345''')
         conf.hiddenservices[0].ports.append('90 127.0.0.1:2345')
         self.assertTrue(conf.needs_save())
 
-class FakeReactor:
+class FakeReactor(task.Clock):
     implements(IReactorCore)
 
     def __init__(self, test, trans, on_protocol):
+        super(FakeReactor, self).__init__()
         self.test = test
         self.transport = trans
         self.on_protocol = on_protocol
@@ -688,13 +697,30 @@ class FakeProcessTransport(proto_helpers.StringTransportWithDisconnection):
         self.protocol.dataReceived('250 OK\r\n')
         self.protocol.dataReceived('650 STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=90 TAG=circuit_create SUMMARY="Establishing a Tor circuit"\r\n')
         self.protocol.dataReceived('650 STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=100 TAG=done SUMMARY="Done"\r\n')
-  
+
+
+class FakeProcessTransportNeverBootstraps(proto_helpers.StringTransportWithDisconnection):
+
+    pid = -1
+
+    def closeStdin(self):
+        self.protocol.dataReceived('250 OK\r\n')
+        self.protocol.dataReceived('250 OK\r\n')
+        self.protocol.dataReceived('250 OK\r\n')
+        self.protocol.dataReceived('650 STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=90 TAG=circuit_create SUMMARY="Establishing a Tor circuit"\r\n')
+
+
 class LaunchTorTests(unittest.TestCase):
     def setUp(self):
         self.protocol = TorControlProtocol()
         self.protocol.connectionMade = do_nothing
         self.transport = proto_helpers.StringTransport()
         self.protocol.makeConnection(self.transport)
+        self.clock = task.Clock()
+
+    def setup_complete_with_timer(self, proto):
+        proto._check_timeout.stop()
+        proto.checkTimeout()
 
     def setup_complete_no_errors(self, proto, config):
         todel = proto.to_delete
@@ -703,6 +729,7 @@ class LaunchTorTests(unittest.TestCase):
         self.assertEqual(len(proto.to_delete), 0)
         for f in todel:
             self.assertTrue(not os.path.exists(f))
+        self.assertEqual(proto._timeout_delayed_call, None)
 
         ## make sure we set up the config to track the created tor
         ## protocol connection
@@ -777,14 +804,51 @@ class LaunchTorTests(unittest.TestCase):
         creator = functools.partial(connector, self.protocol, self.transport)
         d = launch_tor(config, FakeReactor(self, trans, on_protocol), connection_creator=creator)
         d.addCallback(self.setup_complete_fails)
-        d.addErrback(self.check_setup_failure)
-        return d
+        return self.assertFailure(d, Exception)
+
+    def test_launch_with_timeout(self):
+        config = TorConfig()
+        config.OrPort = 1234
+        config.SocksPort = 9999
+        timeout = 5
+
+        def connector(proto, trans):
+            proto._set_valid_events('STATUS_CLIENT')
+            proto.makeConnection(trans)
+            proto.post_bootstrap.callback(proto)
+            return proto.post_bootstrap
+
+        class OnProgress:
+            def __init__(self, test, expected):
+                self.test = test
+                self.expected = expected
+
+            def __call__(self, percent, tag, summary):
+                self.test.assertEqual(self.expected[0], (percent, tag, summary))
+                self.expected = self.expected[1:]
+                self.test.assertTrue('"' not in summary)
+                self.test.assertTrue(percent >= 0 and percent <= 100)
+
+        def on_protocol(proto):
+            proto.outReceived('Bootstrapped 100%\n')
+
+        trans = FakeProcessTransportNeverBootstraps()
+        trans.protocol = self.protocol
+        self.othertrans = trans
+        creator = functools.partial(connector, self.protocol, self.transport)
+        react = FakeReactor(self, trans, on_protocol)
+        d = launch_tor(config, react, connection_creator=creator,
+                       timeout=timeout)
+        rtn = self.assertFailure(d, RuntimeError, "Timed out waiting for Tor to launch.")
+        # FakeReactor is a task.Clock subclass and +1 just to be sure
+        react.advance(timeout+1)
+        return rtn
 
     def setup_fails_stderr(self, fail):
         self.assertTrue('Something went horribly wrong!' in fail.getErrorMessage())
         ## cancel the errback chain, we wanted this
         return None
-        
+
     def test_tor_produces_stderr_output(self):
         config = TorConfig()
         config.OrPort = 1234
@@ -842,8 +906,7 @@ class LaunchTorTests(unittest.TestCase):
         creator = functools.partial(Connector(), self.protocol, self.transport)
         d = launch_tor(config, FakeReactor(self, trans, on_protocol), connection_creator=creator)
         d.addCallback(self.setup_complete_fails)
-        d.addErrback(self.check_setup_failure)
-        return d
+        return self.assertFailure(d, Exception)
 
     def test_tor_connection_user_data_dir(self):
         """
@@ -1022,6 +1085,34 @@ OK''')
         self.config.bootstrap()
 
         return d
+
+    def test_explicit_data_dir(self):
+        ep = TCPHiddenServiceEndpoint(self.reactor, self.config, 123, '/mumble/mumble')
+        d = ep.listen(FakeProtocolFactory())
+
+        self.protocol.answers.append('''config/names=
+HiddenServiceOptions Virtual
+OK''')
+        self.protocol.answers.append('HiddenServiceOptions')
+        
+        self.config.bootstrap()
+
+        return d
+
+    def test_explicit_data_dir_valid_hostname(self):
+        datadir = tempfile.mkdtemp()
+        with open(os.path.join(datadir, 'hostname'), 'w') as f:
+            f.write('timaq4ygg2iegci7.onion')
+        with open(os.path.join(datadir, 'private_key'), 'w') as f:
+            f.write('foo\nbar')
+
+        try:
+            ep = TCPHiddenServiceEndpoint(self.reactor, self.config, 123, datadir)
+            self.assertEqual(ep.onion_uri, 'timaq4ygg2iegci7.onion')
+            self.assertEqual(ep.onion_private_key, 'foo\nbar')
+
+        finally:
+            shutil.rmtree(datadir, ignore_errors=True)
 
     def test_failure(self):
         self.reactor.failures = 2
