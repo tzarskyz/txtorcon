@@ -1,10 +1,16 @@
-from twisted.python import log, failure
+import datetime
+import os
+import stat
+import types
+import warnings
+
+from twisted.python import log
 from twisted.internet import defer
-from twisted.internet.interfaces import IProtocolFactory, IReactorCore
-from twisted.protocols.basic import LineOnlyReceiver
+from twisted.internet.endpoints import TCP4ClientEndpoint, UNIXClientEndpoint
+from twisted.internet.interfaces import IReactorCore, IStreamClientEndpoint
 from zope.interface import implements
 
-## outside this module, you can do "from txtorcon import Stream" etc.
+from txtorcon import TorProtocolFactory
 from txtorcon.stream import Stream
 from txtorcon.circuit import Circuit
 from txtorcon.router import Router, hashFromHexId
@@ -17,12 +23,6 @@ from txtorcon.interface import ITorControlProtocol, IRouterContainer, ICircuitLi
 from txtorcon.interface import ICircuitContainer, IStreamListener, IStreamAttacher
 from spaghetti import FSM, State, Transition
 
-import functools
-import datetime
-import warnings
-import types
-import os
-
 
 def _build_state(proto):
     state = TorState(proto)
@@ -33,7 +33,8 @@ def _wait_for_proto(proto):
     return proto.post_bootstrap
 
 
-def build_tor_connection(endpoint, build_state=True, password=None):
+def build_tor_connection(connection, build_state=True, wait_for_proto=True,
+                         password=None):
     """
     This is used to build a valid TorState (which has .protocol for
     the TorControlProtocol). For example::
@@ -63,14 +64,61 @@ def build_tor_connection(endpoint, build_state=True, password=None):
         (i.e. TorControlProtocol.post_bootstrap or
         TorState.post_bootstap has fired, as needed)
     """
+    if IStreamClientEndpoint.providedBy(connection):
+        endpoint = connection
+    elif isinstance(connection, tuple):
+        if len(connection) == 2:
+            reactor, socket = connection
+            if (os.path.exists(socket) and
+                os.stat(socket).st_mode & (stat.S_IRGP | stat.S_IRUSR |
+                                           stat.S_IROTH)):
+                endpoint = UNIXClientEndpoint(reactor, socket)
+            else:
+                raise ValueError('Can\'t use "%s" as a socket' % (socket, ))
+        elif len(connection) == 3:
+            endpoint = TCP4ClientEndpoint(*connection)
+        else:
+            raise TypeError('Expected either a (reactor, socket)- or a '
+                            '(reactor, host, port)-tuple for argument '
+                            '"connection", got %s' % (connection, ))
+    else:
+        raise TypeError('Expected a (reactor, socket)- or a (reactor, host, '
+                        'port)-tuple or an object implementing IStreamClient'
+                        'Endpoint for argument "connection", got %s' %
+                        (connection, ))
 
-    from txtorcon import TorProtocolFactory
     d = endpoint.connect(TorProtocolFactory(password=password))
     if build_state:
-        d.addCallback(_build_state)
-    else:
-        d.addCallback(_wait_for_proto)
+        d.addCallback(build_state if callable(build_state) else _build_state)
+    elif wait_for_proto:
+        d.addCallback(wait_for_proto if callable(wait_for_proto) else
+                      _wait_for_proto)
     return d
+
+
+def build_local_tor_connection(reactor, host='127.0.0.1', port=9051,
+                               socket='/var/run/tor/control', *args, **kwargs):
+    """
+    This builds a connection to a local Tor, either via 127.0.0.1:9051
+    (which is tried first) or /var/run/tor/control (by default). See
+    also :meth:`build_tor_connection
+    <txtorcon.torstate.build_tor_connection>` for other key-word
+    arguments that are accepted here also.
+
+    :param host:
+        An IP address to find Tor at. Corresponds to the
+        ControlListenAddress torrc option.
+
+    :param port:
+        The port to use with the address when trying to contact
+        Tor. This corresponds to the ControlPort option in torrc
+        (default is 9051).
+    """
+
+    try:
+        return build_tor_connection((reactor, socket), *args, **kwargs)
+    except:
+        return build_tor_connection((reactor, host, port), *args, **kwargs)
 
 
 class TorState(object):
@@ -118,24 +166,24 @@ class TorState(object):
         self.stream_listeners = []
 
         self.addrmap = AddrMap()
-        self.circuits = {}              # keys on id (integer)
-        self.streams = {}               # keys on id (integer)
+        self.circuits = {}               # keys on id (integer)
+        self.streams = {}                # keys on id (integer)
 
-        self.routers = {}               # keys by hexid (string) and by unique names
-        self.routers_by_name = {}       # keys on name, value always list (many duplicate "Unnamed" routers, for example)
-        self.guards = {}                # potentially-usable as entry guards, I think? (any router with 'Guard' flag)
-        self.entry_guards = {}          # from GETINFO entry-guards, our current entry guards
-        self.unusable_entry_guards = [] # list of entry guards we didn't parse out
-        self.authorities = {}           # keys by name
+        self.routers = {}                # keys by hexid (string) and by unique names
+        self.routers_by_name = {}        # keys on name, value always list (many duplicate "Unnamed" routers, for example)
+        self.guards = {}                 # potentially-usable as entry guards, I think? (any router with 'Guard' flag)
+        self.entry_guards = {}           # from GETINFO entry-guards, our current entry guards
+        self.unusable_entry_guards = []  # list of entry guards we didn't parse out
+        self.authorities = {}            # keys by name
 
-        self.cleanup = None             # see set_attacher
+        self.cleanup = None              # see set_attacher
 
         class die(object):
-            __name__ = 'die'            # FIXME? just to ease spagetti.py:82's pain
+            __name__ = 'die'             # FIXME? just to ease spagetti.py:82's pain
 
             def __init__(self, msg):
                 self.msg = msg
-                
+
             def __call__(self, *args):
                 raise RuntimeError(self.msg % tuple(args))
 
@@ -162,13 +210,13 @@ class TorState(object):
 
         waiting_w.add_transition(Transition(waiting_p, lambda x: x[:2] == 'w ', self._router_bandwidth))
         waiting_w.add_transition(Transition(waiting_r, ignorable_line, nothing))
-        waiting_w.add_transition(Transition(waiting_s, lambda x: x[:2] == 'r ', self._router_begin)) # "w" lines are optional
+        waiting_w.add_transition(Transition(waiting_s, lambda x: x[:2] == 'r ', self._router_begin))  # "w" lines are optional
         waiting_w.add_transition(Transition(waiting_r, lambda x: x[:2] != 'w ', die('Expected "w " while parsing routers not "%s"')))
         waiting_w.add_transition(Transition(waiting_r, lambda x: x.strip() == '.', nothing))
 
         waiting_p.add_transition(Transition(waiting_r, lambda x: x[:2] == 'p ', self._router_policy))
         waiting_p.add_transition(Transition(waiting_r, ignorable_line, nothing))
-        waiting_p.add_transition(Transition(waiting_s, lambda x: x[:2] == 'r ', self._router_begin)) # "p" lines are optional
+        waiting_p.add_transition(Transition(waiting_s, lambda x: x[:2] == 'r ', self._router_begin))  # "p" lines are optional
         waiting_p.add_transition(Transition(waiting_r, lambda x: x[:2] != 'p ', die('Expected "p " while parsing routers not "%s"')))
         waiting_p.add_transition(Transition(waiting_r, lambda x: x.strip() == '.', nothing))
 
@@ -360,8 +408,7 @@ class TorState(object):
         'REASON_RESOURCELIMIT': 11,     # (OR has no resources to fulfill request)
         'REASON_CONNRESET': 12,         # (Connection was unexpectedly reset)
         'REASON_TORPROTOCOL': 13,       # (Sent when closing connection because of Tor protocol violations.)
-        'REASON_NOTDIRECTORY': 14,      # (Client sent RELAY_BEGIN_DIR to a non-directory relay.)
-        }
+        'REASON_NOTDIRECTORY': 14}      # (Client sent RELAY_BEGIN_DIR to a non-directory relay.)
 
     def close_stream(self, stream, reason='REASON_MISC'):
         if stream.id not in self.streams:
@@ -390,7 +437,7 @@ class TorState(object):
         circ.update([str(circ_id), 'EXTENDED'])
         return circ
 
-    def build_circuit(self, routers):
+    def build_circuit(self, routers=None):
         """
         Builds a circuit consisting of exactly the routers specified,
         in order.  This issues an EXTENDCIRCUIT call to Tor with all
@@ -398,7 +445,8 @@ class TorState(object):
 
         :param routers: a list of Router instances which is the path
             desired. A warming is issued if the first one isn't in
-            self.entry_guards
+            self.entry_guards To allow Tor to choose the routers
+            itself, pass None (the default) for routers.
 
         :return:
             A Deferred that will callback with a Circuit instance
@@ -406,9 +454,15 @@ class TorState(object):
             else).
         """
 
-        if routers[0] not in self.entry_guards.values():
-            warnings.warn("Building a circuit not starting with a guard: %s" % (str(routers),), RuntimeWarning)
-        d = self.protocol.queue_command("EXTENDCIRCUIT 0 " + ','.join(map(lambda x: x.id_hex[1:], routers)))
+        if routers is None or routers == []:
+            cmd = "EXTENDCIRCUIT 0"
+
+        else:
+            if routers[0] not in self.entry_guards.values():
+                warnings.warn("Building a circuit not starting with a guard: %s" % (str(routers),), RuntimeWarning)
+            cmd = "EXTENDCIRCUIT 0 " + ','.join(map(lambda x: x.id_hex[1:], routers))
+
+        d = self.protocol.queue_command(cmd)
         d.addCallback(self._find_circuit_after_extend)
         return d
 
@@ -451,11 +505,11 @@ class TorState(object):
                         def __init__(self, state, streamid):
                             self.stream_id = streamid
                             self.state = state
-                            
+
                         def __call__(self, arg):
                             circid = arg.id
                             self.state.protocol.queue_command("ATTACHSTREAM %d %d" % (self.stream_id, circid))
-                            
+
                     circ.addCallback(IssueStreamAttach(self, stream.id)).addErrback(log.err)
 
                 else:
@@ -543,7 +597,7 @@ class TorState(object):
         Used internally as a callback to update Circuit information
         from CIRC events.
         """
-        
+
         #print "circuit_update",line
         args = line.split()
         circ_id = int(args[0])
@@ -556,7 +610,7 @@ class TorState(object):
         Used internally as a callback to update Stream information
         from STREAM events.
         """
-        
+
         #print "stream_update",line
         if line.strip() == 'stream-status=':
             ## this happens if there are no active streams
@@ -586,14 +640,12 @@ class TorState(object):
         txtorlog.msg(" --> addr_map", addr)
         self.addrmap.update(addr)
 
-    event_map = {
-        'STREAM': _stream_update,
-        'CIRC': _circuit_update,
-        'NS': _update_network_status,
-        'NEWCONSENSUS': _update_network_status,
-        'NEWDESC': _newdesc_update,
-        'ADDRMAP': _addr_map
-        }
+    event_map = {'STREAM': _stream_update,
+                 'CIRC': _circuit_update,
+                 'NS': _update_network_status,
+                 'NEWCONSENSUS': _update_network_status,
+                 'NEWDESC': _newdesc_update,
+                 'ADDRMAP': _addr_map}
     """event_map used by add_events to map event_name -> unbound method"""
     @defer.inlineCallbacks
     def _add_events(self):
@@ -631,7 +683,8 @@ class TorState(object):
             if len(routerid) > 41:
                 nick = routerid[42:]
                 is_named = routerid[41] is '='
-            router.update(nick, hashFromHexId(idhash), '0'*27, 'unknown', 'unknown', '0', '0')
+            router.update(nick, hashFromHexId(idhash), '0' * 27, 'unknown',
+                          'unknown', '0', '0')
             router.name_is_unique = is_named
             return router
 
@@ -665,7 +718,7 @@ class TorState(object):
         IStreamListener: stream has been closed (won't be in
         controller's list anymore)
         """
-        
+
         txtorlog.msg("stream_closed", stream.id)
         del self.streams[stream.id]
 
@@ -674,7 +727,7 @@ class TorState(object):
         IStreamListener: stream failed for some reason (won't be in
         controller's list anymore)
         """
-        
+
         txtorlog.msg("stream_failed", stream.id)
         del self.streams[stream.id]
 

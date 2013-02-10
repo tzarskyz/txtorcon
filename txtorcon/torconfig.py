@@ -1,35 +1,34 @@
 from __future__ import with_statement
 
-from twisted.python import log, failure
-from twisted.internet import defer, error, protocol, task
-from twisted.internet.interfaces import IProtocolFactory, IStreamServerEndpoint, IReactorTime
-from twisted.internet.endpoints import TCP4ClientEndpoint, TCP4ServerEndpoint
-from twisted.protocols.basic import LineOnlyReceiver
-from zope.interface import implements
-
-## outside this module, you can do "from txtorcon import Stream" etc.
-from txtorcon.stream import Stream
-from txtorcon.circuit import Circuit
-from txtorcon.router import Router
-from txtorcon.addrmap import AddrMap
-from txtorcon.torcontrolprotocol import parse_keywords, DEFAULT_VALUE, TorProtocolFactory
-from txtorcon.util import delete_file_or_tree, find_keywords
-from txtorcon.log import txtorlog
-
-from txtorcon.interface import ITorControlProtocol, IRouterContainer, ICircuitListener
-from txtorcon.interface import ICircuitContainer, IStreamListener, IStreamAttacher
-from spaghetti import FSM, State, Transition
-
 import os
 import sys
 import string
-import itertools
 import types
 import functools
 import random
 import tempfile
 from StringIO import StringIO
 import shlex
+if sys.platform in ('linux2', 'darwin'):
+    import pwd
+
+from twisted.python import log
+from twisted.internet import defer, error, protocol
+from twisted.internet.interfaces import IStreamServerEndpoint, IReactorTime
+from twisted.internet.endpoints import TCP4ClientEndpoint, TCP4ServerEndpoint
+from zope.interface import implements
+
+from txtorcon.torcontrolprotocol import parse_keywords, TorProtocolFactory
+from txtorcon.util import delete_file_or_tree, find_keywords, find_tor_binary
+from txtorcon.log import txtorlog
+from txtorcon.interface import ITorControlProtocol
+
+
+class TorNotFound(RuntimeError):
+    """
+    Raised by launch_tor() in case the tor binary was unspecified and could
+    not be found by consulting the shell.
+    """
 
 
 class TCPHiddenServiceEndpoint(object):
@@ -404,7 +403,7 @@ class TorProcessProtocol(protocol.ProcessProtocol):
 
 
 def launch_tor(config, reactor,
-               tor_binary='/usr/sbin/tor',
+               tor_binary=None,
                progress_updates=None,
                connection_creator=None,
                timeout=None):
@@ -424,7 +423,8 @@ def launch_tor(config, reactor,
     :param reactor: a Twisted IReactorCore implementation (usually
         twisted.internet.reactor)
 
-    :param tor_binary: path to the Tor binary to run.
+    :param tor_binary: path to the Tor binary to run. Tries to find the tor
+        binary if unset.
 
     :param progress_updates: a callback which gets progress updates; gets as
          args: percent, tag, summary (FIXME make an interface for this).
@@ -463,32 +463,41 @@ def launch_tor(config, reactor,
     ## config and get Tor to load that...which might be the best
     ## option anyway.
 
+    if tor_binary is None:
+        tor_binary = find_tor_binary()
+    if tor_binary is None:
+        # We fail right here instead of waiting for the reactor to start
+        raise TorNotFound('Tor binary could not be found')
+
+    if config.needs_save():
+        log.msg("Config was unsaved when launch_tor() called; calling save().")
+        config.save()
+
     try:
-        user_set_data_directory = True
         data_directory = config.DataDirectory
         user_set_data_directory = True
     except KeyError:
         user_set_data_directory = False
         data_directory = tempfile.mkdtemp(prefix='tortmp')
+        config.DataDirectory = data_directory
+
+        # Set ownership on the temp-dir to the user tor will drop privileges to
+        # when executing as root.
+        try:
+            user = config.User
+        except KeyError:
+            pass
+        else:
+            if sys.platform in ('linux2', 'darwin') and os.geteuid() == 0:
+                os.chown(data_directory, pwd.getpwnam(user).pw_uid, -1)
 
     try:
         control_port = config.ControlPort
     except KeyError:
         control_port = 9052
-
-    try:
-        socks_port = config.SocksPort
-    except KeyError:
-        socks_port = 9049
-
-    config.ControlPort = control_port
-    config.SocksPort = socks_port
-    config.DataDirectory = data_directory
-
-    (fd, torrc) = tempfile.mkstemp(prefix='tortmp')
+        config.ControlPort = control_port
 
     config.CookieAuthentication = 1
-    #config.SocksPort = 0
     config.__OwningControllerProcess = os.getpid()
     config.save()
 
@@ -503,10 +512,11 @@ def launch_tor(config, reactor,
                                                TorProtocolFactory())
     process_protocol = TorProcessProtocol(connection_creator, progress_updates, config, reactor, timeout)
 
-    # we do both because this process might be shut down way before
-    # the reactor, but if the reactor bombs out without the subprocess
-    # getting closed cleanly, we'll want the system shutdown events
-    # triggered
+    # we set both to_delete and the shutdown events because this
+    # process might be shut down way before the reactor, but if the
+    # reactor bombs out without the subprocess getting closed cleanly,
+    # we'll want the system shutdown events triggered so the temporary
+    # files get cleaned up
 
     # we don't want to delete the user's directories, just our
     # temporary ones
@@ -877,8 +887,16 @@ class TorConfig(object):
         ``things which might get into the running Tor if save() were
         to be called''
         """
-
-        return self.config[self._find_real_name(name)]
+        if name.startswith('__') and name.endswith('__'):
+            # Special case __foobar__ attributes to go for the real dict
+            # instead of self.config and raise AttributeError instead
+            # of KeyError
+            try:
+                return self.__dict__[name]
+            except KeyError, e:
+                raise AttributeError(str(e))
+        else:
+            return self.config[self._find_real_name(name)]
 
     def get_type(self, name):
         """
@@ -921,7 +939,7 @@ class TorConfig(object):
     def bootstrap(self, *args):
         try:
             self.protocol.add_event_listener('CONF_CHANGED', self._conf_changed)
-        except RuntimeError, e:
+        except RuntimeError:
             ## for Tor versions which don't understand CONF_CHANGED
             ## there's nothing we can really do.
             log.msg("Can't listen for CONF_CHANGED event; won't stay up-to-date with other clients.")
@@ -1024,7 +1042,7 @@ class TorConfig(object):
             ## auto, 0 for false and 1 for true. could be nicer if it
             ## was called AutoBoolean or something, but...
             value = value.replace('+', '_')
-            
+
             inst = None
             # FIXME: put parser classes in dict instead?
             for cls in config_types:

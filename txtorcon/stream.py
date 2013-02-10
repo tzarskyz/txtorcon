@@ -11,21 +11,7 @@ to attach streams to circuits "by hand"
 
 from twisted.python import log
 from txtorcon.interface import ICircuitContainer, IStreamListener
-import ipaddr
-
-from txtorcon.util import find_keywords
-
-
-def maybe_ip_addr(addr):
-    """
-    Tries to return an IPAddress, otherwise returns a string. I could
-    explicitly check for .exit or .onion at the end instead.
-    """
-
-    try:
-        return ipaddr.IPAddress(addr)
-    except ValueError:
-        return str(addr)
+from txtorcon.util import find_keywords, maybe_ip_addr
 
 
 class Stream(object):
@@ -184,7 +170,7 @@ class Stream(object):
             [x.stream_failed(self, reason, remote_reason) for x in self.listeners]
 
         elif self.state == 'SENTCONNECT':
-            pass  #print 'SENTCONNECT',self,args
+            pass  # print 'SENTCONNECT',self,args
 
         elif self.state == 'DETACHED':
             reason = ''
@@ -198,10 +184,10 @@ class Stream(object):
             [x.stream_detach(self, reason) for x in self.listeners]
 
         elif self.state == 'NEWRESOLVE':
-            pass  #print 'NEWRESOLVE',self,args
+            pass  # print 'NEWRESOLVE',self,args
 
         elif self.state == 'SENTRESOLVE':
-            pass  #print 'SENTRESOLVE',self,args
+            pass  # print 'SENTRESOLVE',self,args
 
         else:
             raise RuntimeError("Unknown state: %s" % self.state)
