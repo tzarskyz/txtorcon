@@ -34,7 +34,7 @@ def _wait_for_proto(proto):
 
 
 def build_tor_connection(connection, build_state=True, wait_for_proto=True,
-                         password=None):
+                         password_function=lambda: None):
     """
     This is used to build a valid TorState (which has .protocol for
     the TorControlProtocol). For example::
@@ -53,7 +53,11 @@ def build_tor_connection(connection, build_state=True, wait_for_proto=True,
         d.addCallback(example)
         reactor.run()
 
-    :param build_state: If True (the default) a TorState object will be
+    :param password_function:
+        See :class:`txtorcon.TorControlProtocol`
+
+    :param build_state:
+        If True (the default) a TorState object will be
         built as well. If False, just a TorControlProtocol will be
         returned via the Deferred.
 
@@ -64,8 +68,10 @@ def build_tor_connection(connection, build_state=True, wait_for_proto=True,
         (i.e. TorControlProtocol.post_bootstrap or
         TorState.post_bootstap has fired, as needed)
     """
+
     if IStreamClientEndpoint.providedBy(connection):
         endpoint = connection
+
     elif isinstance(connection, tuple):
         if len(connection) == 2:
             reactor, socket = connection
@@ -87,7 +93,7 @@ def build_tor_connection(connection, build_state=True, wait_for_proto=True,
                         'Endpoint for argument "connection", got %s' %
                         (connection, ))
 
-    d = endpoint.connect(TorProtocolFactory(password=password))
+    d = endpoint.connect(TorProtocolFactory(password_function=password_function))
     if build_state:
         d.addCallback(build_state if callable(build_state) else _build_state)
     elif wait_for_proto:
@@ -707,13 +713,13 @@ class TorState(object):
         txtorlog.msg("stream_attach", stream.id,
                      stream.target_host, " -> ", circuit)
 
-    def stream_detach(self, stream, circuit):
+    def stream_detach(self, stream, **kw):
         """
         IStreamListener
         """
         txtorlog.msg("stream_detach", stream.id)
 
-    def stream_closed(self, stream):
+    def stream_closed(self, stream, **kw):
         """
         IStreamListener: stream has been closed (won't be in
         controller's list anymore)
@@ -722,7 +728,7 @@ class TorState(object):
         txtorlog.msg("stream_closed", stream.id)
         del self.streams[stream.id]
 
-    def stream_failed(self, stream, reason, remote_reason):
+    def stream_failed(self, stream, **kw):
         """
         IStreamListener: stream failed for some reason (won't be in
         controller's list anymore)
@@ -758,12 +764,12 @@ class TorState(object):
         txtorlog.msg("circuit_destroy:", circuit.id)
         del self.circuits[circuit.id]
 
-    def circuit_closed(self, circuit):
+    def circuit_closed(self, circuit, **kw):
         "ICircuitListener API"
         txtorlog.msg("circuit_closed", circuit)
         self.circuit_destroy(circuit)
 
-    def circuit_failed(self, circuit, kw):
+    def circuit_failed(self, circuit, **kw):
         "ICircuitListener API"
         txtorlog.msg("circuit_failed", circuit, str(kw))
         self.circuit_destroy(circuit)
