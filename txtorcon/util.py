@@ -3,12 +3,14 @@
 ## wrapper for GeoIP since the API for city vs. country is different.
 ##
 
+import glob
 import os
 import hmac
 import hashlib
 import shutil
 import socket
 import subprocess
+import struct
 
 try:
     import GeoIP
@@ -48,6 +50,55 @@ try:
 except IOError:
     country = None
 
+try:
+    import ipaddr as _ipaddr
+    ipaddr = _ipaddr
+except ImportError:
+    ipaddr = None
+
+
+def is_executable(path):
+    """Checks if the given path points to an existing, executable file"""
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def find_tor_binary(globs=('/usr/sbin/', '/usr/bin/',
+                           '/Applications/TorBrowser_*.app/Contents/MacOS/')):
+    """Tries to find the tor executable using the shell first or in in the paths
+       whose glob-patterns is in the given 'globs'-tuple.
+    """
+    # Try to find the tor executable using the shell
+    try:
+        proc = subprocess.Popen(('type -p tor', ), stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, shell=True)
+    except OSError:
+        pass
+    else:
+        stdout, _ = proc.communicate()
+        if proc.poll() == 0 and stdout != '':
+            return stdout.strip()
+    # the shell may not provide type and tor is usually not on PATH when using
+    # the browser-bundle. Look in specific places
+    for pattern in globs:
+        for path in glob.glob(pattern):
+            torbin = os.path.join(path, 'tor')
+            if is_executable(torbin):
+                return torbin
+
+
+def maybe_ip_addr(addr):
+    """
+    Tries to return an IPAddress, otherwise returns a string. I could
+    explicitly check for .exit or .onion at the end instead.
+    """
+
+    if ipaddr is not None:
+        try:
+            return ipaddr.IPAddress(addr)
+        except ValueError:
+            pass
+    return str(addr)
+
 
 def find_keywords(args, key_filter=lambda x: not x.startswith("$")):
     """
@@ -76,7 +127,7 @@ def delete_file_or_tree(*args):
             shutil.rmtree(f, ignore_errors=True)
 
 
-def ip_from_int(self, ip):
+def ip_from_int(ip):
         """ Convert long int back to dotted quad string """
         return socket.inet_ntoa(struct.pack('>I', ip))
 

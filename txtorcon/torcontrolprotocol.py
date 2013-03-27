@@ -1,34 +1,20 @@
 from __future__ import with_statement
 
-import logging
-
-from twisted.python import log, failure
-from twisted.internet import defer, reactor
+from twisted.python import log
+from twisted.internet import defer
 from twisted.internet.interfaces import IProtocolFactory
 from twisted.protocols.basic import LineOnlyReceiver
 from zope.interface import implements
 
-## outside this module, you can do "from txtorcon import Stream" etc.
-from txtorcon.stream import Stream
-from txtorcon.circuit import Circuit
-from txtorcon.router import Router
-from txtorcon.addrmap import AddrMap
 from txtorcon.util import hmac_sha256, compare_via_hash
 from txtorcon.log import txtorlog
 
-from txtorcon.interface import ICircuitListener, ICircuitContainer, IStreamListener
-from txtorcon.interface import IStreamAttacher, IRouterContainer, ITorControlProtocol
+from txtorcon.interface import ITorControlProtocol
 from spaghetti import FSM, State, Transition
 
 import os
 import re
-import shlex
-import time
-import datetime
-import warnings
 import types
-import hmac
-import hashlib
 import base64
 
 DEFAULT_VALUE = 'DEFAULT'
@@ -59,13 +45,12 @@ class TorProtocolFactory(object):
     Twisted interaction.
 
     If your running Tor doesn't support COOKIE authentication, then
-    you should supply a password. FIXME: should supply a
-    password-getting method, instead.
+    you should supply a password callback.
     """
 
     implements(IProtocolFactory)
 
-    def __init__(self, password=None):
+    def __init__(self, password_function=lambda: None):
         """
         Builds protocols to talk to a Tor client on the specified
         address. For example::
@@ -74,11 +59,15 @@ class TorProtocolFactory(object):
         reactor.run()
 
         By default, COOKIE authentication is used if
-        available. Otherwise, a password should be supplied. FIXME:
-        user should supply a password getter, not a password (e.g. if
-        they want to prompt)
+        available.
+
+        :param password_function:
+           If supplied, this is a zero-argument method that returns a
+           password (or a Deferred). By default, it returns None. This
+           is only queried if the Tor we connect to doesn't support
+           (or hasn't enabled) COOKIE authentication.
         """
-        self.password = password
+        self.password_function = password_function
 
     def doStart(self):
         ":api:`twisted.internet.interfaces.IProtocolFactory` API"
@@ -88,7 +77,7 @@ class TorProtocolFactory(object):
 
     def buildProtocol(self, addr):
         ":api:`twisted.internet.interfaces.IProtocolFactory` API"
-        proto = TorControlProtocol(self.password)
+        proto = TorControlProtocol(self.password_function)
         proto.factory = self
         return proto
 
@@ -117,6 +106,7 @@ class Event(object):
         for cb in self.callbacks:
             cb(data)
 
+
 def unquote(word):
     if len(word) == 0:
         return word
@@ -125,6 +115,7 @@ def unquote(word):
     elif word[0] == "'" and word[-1] == "'":
         return word[1:-1]
     return word
+
 
 def parse_keywords(lines, multiline_values=True):
     """
@@ -203,15 +194,18 @@ class TorControlProtocol(LineOnlyReceiver):
 
     implements(ITorControlProtocol)
 
-    def __init__(self, password=None):
+    def __init__(self, password_function=None):
         """
-        password is only used if the Tor doesn't have COOKIE
-        authentication turned on. Tor's default is COOKIE.
+        :param password_function:
+            A zero-argument callable which returns a password (or
+            Deferred). It is only called if the Tor doesn't have
+            COOKIE authentication turned on. Tor's default is COOKIE.
         """
 
-        self.password = password
-        """If set, a password to use for authentication to Tor
-        (default is to use COOKIE, however)."""
+        self.password_function = password_function
+        """If set, a callable to query for a password to use for
+        authentication to Tor (default is to use COOKIE, however). May
+        return Deferred."""
 
         self.version = None
         """Version of Tor we've connected to."""
@@ -393,7 +387,7 @@ class TorControlProtocol(LineOnlyReceiver):
         strargs = map(lambda x: str(x), args)
         keys = [strargs[i] for i in range(0, len(strargs), 2)]
         values = [strargs[i] for i in range(1, len(strargs), 2)]
-        
+
         def maybe_quote(s):
             if ' ' in s:
                 return '"%s"' % s
@@ -419,7 +413,7 @@ class TorControlProtocol(LineOnlyReceiver):
         """
         :param evt: event name, see also
         :var:`txtorcon.TorControlProtocol.events` .keys()
-        
+
         Add a listener to an Event object. This may be called multiple
         times for the same event. If it's the first listener, a new
         SETEVENTS call will be initiated to Tor.
@@ -584,10 +578,11 @@ class TorControlProtocol(LineOnlyReceiver):
 
         if 'SAFECOOKIE' in methods:
             cookie = re.search('COOKIEFILE="(.*)"', protoinfo).group(1)
-            self.cookie_data = open(cookie,'r').read()
+            self.cookie_data = open(cookie, 'r').read()
             if len(self.cookie_data) != 32:
                 raise RuntimeError("Expected authentication cookie to be 32 bytes, got %d" % len(self.cookie_data))
-            txtorlog.msg("Using SAFECOOKIE authentication",cookie,len(self.cookie_data),"bytes")
+            txtorlog.msg("Using SAFECOOKIE authentication", cookie,
+                         len(self.cookie_data), "bytes")
             self.client_nonce = os.urandom(32)
 
             d = self.queue_command('AUTHCHALLENGE SAFECOOKIE %s' % base64.b16encode(self.client_nonce))
@@ -604,11 +599,15 @@ class TorControlProtocol(LineOnlyReceiver):
             self.authenticate(data).addCallback(self._bootstrap).addErrback(self._auth_failed)
             return
 
-        if self.password:
-            self.authenticate(self.password).addCallback(self._bootstrap).addErrback(self._auth_failed)
+        if self.password_function:
+            passwd = defer.maybeDeferred(self.password_function)
+            passwd.addCallback(self._do_password_authentication).addErrback(self._auth_failed)
             return
 
-        raise RuntimeError("The Tor I connected to doesn't support SAFECOOKIE nor COOKIE authentication and I have no password.")
+        raise RuntimeError("The Tor I connected to doesn't support SAFECOOKIE nor COOKIE authentication and I have no password_function specified.")
+
+    def _do_password_authentication(self, passwd):
+        self.authenticate(passwd).addCallback(self._bootstrap).addErrback(self._auth_failed)
 
     def _set_valid_events(self, events):
         "used as a callback; see _bootstrap"
@@ -666,7 +665,7 @@ class TorControlProtocol(LineOnlyReceiver):
             return False
 
         sl = len(line) > 3 and line[3] == ' '
-#        print "single line?",line,sl
+        #print "single line?",line,sl
         if sl:
             self.code = code
             return True
@@ -674,10 +673,10 @@ class TorControlProtocol(LineOnlyReceiver):
 
     def _start_command(self, line):
         "for FSM"
-#        print "startCommand",self.code,line
+        # print "startCommand",self.code,line
         self.code = int(line[:3])
-#        print "startCommand:",self.code
-        if self.command and self.command[2] != None:
+        # print "startCommand:",self.code
+        if self.command and self.command[2] is not None:
             self.command[2](line[4:])
         else:
             self.response = line[4:] + '\n'
@@ -685,23 +684,25 @@ class TorControlProtocol(LineOnlyReceiver):
 
     def _is_continuation_line(self, line):
         "for FSM"
-#        print "isContinuationLine",self.code,line
+        # print "isContinuationLine",self.code,line
         code = int(line[:3])
         if self.code and self.code != code:
-            raise RuntimeError("Unexpected code %d, wanted %d" % (code,self.code))
+            raise RuntimeError("Unexpected code %d, wanted %d" % (code,
+                                                                  self.code))
         return line[3] == '-'
 
     def _is_multi_line(self, line):
         "for FSM"
-#        print "isMultiLine",self.code,line,line[3] == '+'
+        # print "isMultiLine",self.code,line,line[3] == '+'
         code = int(line[:3])
         if self.code and self.code != code:
-            raise RuntimeError("Unexpected code %d, wanted %d" % (code,self.code))
+            raise RuntimeError("Unexpected code %d, wanted %d" % (code,
+                                                                  self.code))
         return line[3] == '+'
 
     def _accumulate_multi_response(self, line):
         "for FSM"
-        if self.command and self.command[2] != None:
+        if self.command and self.command[2] is not None:
             self.command[2](line)
 
         else:
@@ -710,7 +711,7 @@ class TorControlProtocol(LineOnlyReceiver):
 
     def _accumulate_response(self, line):
         "for FSM"
-        if self.command and self.command[2] != None:
+        if self.command and self.command[2] is not None:
             self.command[2](line[4:])
 
         else:
@@ -719,7 +720,7 @@ class TorControlProtocol(LineOnlyReceiver):
 
     def _is_finish_line(self, line):
         "for FSM"
-#        print "isFinish",line
+        # print "isFinish",line
         if len(line) < 1:
             return False
         if line[0] == '.':
@@ -730,9 +731,9 @@ class TorControlProtocol(LineOnlyReceiver):
 
     def _broadcast_response(self, line):
         "for FSM"
-#        print "BCAST",line
+        # print "BCAST",line
         if len(line) > 3:
-            if self.code >= 200 and self.code < 300 and self.command and self.command[2] != None:
+            if self.code >= 200 and self.code < 300 and self.command and self.command[2] is not None:
                 self.command[2](line[4:])
                 resp = ''
 
@@ -743,7 +744,7 @@ class TorControlProtocol(LineOnlyReceiver):
         self.response = ''
         if self.code >= 200 and self.code < 300:
             if self.defer is None:
-                raise RuntimeError("Got a response, but didn't issue a command.");
+                raise RuntimeError("Got a response, but didn't issue a command.")
             self.defer.callback(resp)
         elif self.code >= 500 and self.code < 600:
             err = TorProtocolError(self.code, resp)

@@ -7,10 +7,7 @@ test:
 install:
 	python setup.py install
 
-docs/README.rst: README
-	pandoc -r markdown -w rst README -o docs/README.rst
-
-doc: docs/*.rst docs/README.rst
+doc: docs/*.rst
 	cd docs && make html
 	cp dist/txtorcon-0.7.tar.gz docs/_build/html
 	cp dist/txtorcon-0.6.tar.gz.sig docs/_build/html
@@ -18,6 +15,18 @@ doc: docs/*.rst docs/README.rst
 coverage:
 	trial --reporter=bwverbose --coverage txtorcon
 	python scripts/coverage.py
+
+pep8:
+	find txtorcon/*.py txtorcon/test/*.py examples/*.py | xargs pep8 --ignore=E501
+
+pep8count:
+	find txtorcon/*.py txtorcon/test/*.py examples/*.py | xargs pep8 --ignore=E501 | wc -l
+
+pyflakes:
+	pyflakes txtorcon/ examples/
+
+pyflakescount:
+	pyflakes txtorcon/ examples/ | wc -l
 
 clean:
 	-rm -rf _trial_temp
@@ -42,6 +51,13 @@ dist/txtorcon-0.7.tar.gz.sig: dist/txtorcon-0.7.tar.gz
 
 release: dist/txtorcon-0.7.tar.gz.sig setup.py
 	python setup.py sdist upload
+
+virtualenv:
+	mkdir -p tmp
+	cd tmp
+	virtualenv --never-download --extra-search-dir=/usr/lib/python2.7/dist-packages/ txtorcon_env
+	@echo "created tmp/txtorcon_env"
+	@echo "see INSTALL for more information"
 
 html: docs/README.rst
 	cd docs && make html

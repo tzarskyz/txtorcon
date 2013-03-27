@@ -1,5 +1,3 @@
-import sys
-
 from twisted.python import log
 from interface import IRouterContainer
 
@@ -78,6 +76,15 @@ class Circuit(object):
     def unlisten(self, listener):
         self.listeners.remove(listener)
 
+    def _create_flags(self, kw):
+        "this clones the kw dict, adding a lower-case version of every key (duplicated in stream.py; put in util?)"
+
+        flags = {}
+        for k in kw.keys():
+            flags[k] = kw[k]
+            flags[k.lower()] = kw[k]
+        return flags
+
     def update(self, args):
         ##print "Circuit.update:",args
         if self.id is None:
@@ -109,13 +116,15 @@ class Circuit(object):
             if len(self.streams) > 0:
                 log.err(RuntimeError("Circuit is %s but still has %d streams" %
                                      (self.state, len(self.streams))))
-            [x.circuit_closed(self) for x in self.listeners]
+            flags = self._create_flags(kw)
+            [x.circuit_closed(self, **flags) for x in self.listeners]
 
         elif self.state == 'FAILED':
             if len(self.streams) > 0:
                 log.err(RuntimeError("Circuit is %s but still has %d streams" %
                                      (self.state, len(self.streams))))
-            [x.circuit_failed(self, kw) for x in self.listeners]
+            flags = self._create_flags(kw)
+            [x.circuit_failed(self, **flags) for x in self.listeners]
 
     def update_path(self, path):
         """
@@ -131,7 +140,7 @@ class Circuit(object):
         this might happen in the case of hidden services choosing a
         rendevouz point not in the current consensus.
         """
-        
+
         oldpath = self.path
         self.path = []
         for router in path:
@@ -142,7 +151,7 @@ class Circuit(object):
             ## this will create a Router if we give it a router
             ## LongName that doesn't yet exist
             router = self.router_container.router_from_id(p)
-            
+
             self.path.append(router)
             if len(self.path) > len(oldpath):
                 [x.circuit_extend(self, router) for x in self.listeners]
